@@ -3,7 +3,7 @@ import torch
 # Is the PC has cuda
 cuda_use = torch.cuda.is_available()
 # which cuda to use
-cuda_num = 2
+cuda_num = 0
 
 # learning rate for D, the lr in Apple blog is 0.0001
 d_lr = 0.001
@@ -16,9 +16,9 @@ img_height = 35
 img_channels = 1
 
 # synthetic image path
-syn_path = 'dataset/SynthEyes_train_data'
+syn_path = '../SimGAN/SimGAN_pytorch/dataset/UnityEyes_train_data'
 # real image path
-real_path = 'dataset/MPIIGaze_data'
+real_path = '../SimGAN/SimGAN_pytorch/dataset/MPIIGaze_Dataset'
 # training result path to save
 train_res_path = 'train_res'
 # final_res_path = 'final_res'
@@ -58,4 +58,3 @@ disc_pre_path = None
 # dictionary saving path
 D_path = 'models/D_%d.pkl'
 R_path = 'models/R_%d.pkl'
-

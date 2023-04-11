@@ -25,7 +25,34 @@ class Main(object):
         # data
         self.syn_train_loader = None
         self.real_loader = None
+        # iter
+        self.syn_train_iter = None
+        self.real_image_iter = None
 
+    def get_next_synth_batch(self):
+        try:
+            syn_image_batch, _ = next(self.syn_train_iter)
+        except StopIteration:
+            # StopIteration is thrown if dataset ends
+            # reinitialize data loader 
+            self.syn_train_iter = iter(self.syn_train_loader)
+            syn_image_batch, _ = next(self.syn_train_iter)
+
+        syn_image_batch = Variable(syn_image_batch).cuda(cfg.cuda_num)
+        return syn_image_batch
+
+    def get_next_real_batch(self):
+        try:
+            real_image_batch, _ = next(self.real_image_iter)
+        except StopIteration:
+            # StopIteration is thrown if dataset ends
+            # reinitialize data loader 
+            self.real_image_iter = iter(self.real_loader)
+            real_image_batch, _ = next(self.real_image_iter)
+
+        real_image_batch = Variable(real_image_batch).cuda(cfg.cuda_num)
+        return real_image_batch
+    
     def build_network(self):
         print('=' * 50)
         print('Building network...')
@@ -46,21 +73,23 @@ class Main(object):
         print('=' * 50)
         print('Loading data...')
         transform = transforms.Compose([
-            transforms.ImageOps.grayscale,
-            transforms.Scale((cfg.img_width, cfg.img_height)),
+            transforms.Grayscale(),
+            transforms.Resize((cfg.img_width, cfg.img_height)),
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+            transforms.Normalize((0.5), (0.5))])
 
         syn_train_folder = torchvision.datasets.ImageFolder(root=cfg.syn_path, transform=transform)
         # print(syn_train_folder)
         self.syn_train_loader = Data.DataLoader(syn_train_folder, batch_size=cfg.batch_size, shuffle=True,
-                                                pin_memory=True)
+                                                pin_memory=True, num_workers=8)
+        self.syn_train_iter = iter(self.syn_train_loader)
         print('syn_train_batch %d' % len(self.syn_train_loader))
 
         real_folder = torchvision.datasets.ImageFolder(root=cfg.real_path, transform=transform)
         # real_folder.imgs = real_folder.imgs[:2000]
         self.real_loader = Data.DataLoader(real_folder, batch_size=cfg.batch_size, shuffle=True,
-                                           pin_memory=True)
+                                           pin_memory=True, num_workers=8)
+        self.real_image_iter = iter(self.real_loader)
         print('real_batch %d' % len(self.real_loader))
 
     def pre_train_r(self):
@@ -74,8 +103,7 @@ class Main(object):
         print('pre-training the refiner network %d times...' % cfg.r_pretrain)
 
         for index in range(cfg.r_pretrain):
-            syn_image_batch, _ = self.syn_train_loader.__iter__().next()
-            syn_image_batch = Variable(syn_image_batch).cuda(cfg.cuda_num)
+            syn_image_batch = self.get_next_synth_batch()
 
             self.R.train()
             ref_image_batch = self.R(syn_image_batch)
@@ -91,20 +119,17 @@ class Main(object):
             # log every `log_interval` steps
             if (index % cfg.r_pre_per == 0) or (index == cfg.r_pretrain - 1):
                 # figure_name = 'refined_image_batch_pre_train_step_{}.png'.format(index)
-                print('[%d/%d] (R)reg_loss: %.4f' % (index, cfg.r_pretrain, r_loss.data[0]))
+                print('[%d/%d] (R)reg_loss: %.4f' % (index, cfg.r_pretrain, r_loss.item()))
 
-                syn_image_batch, _ = self.syn_train_loader.__iter__().next()
-                syn_image_batch = Variable(syn_image_batch, volatile=True).cuda(cfg.cuda_num)
-
-                real_image_batch, _ = self.real_loader.__iter__().next()
-                real_image_batch = Variable(real_image_batch, volatile=True)
+                syn_image_batch = self.get_next_synth_batch()
+                real_image_batch = self.get_next_real_batch()
 
                 self.R.eval()
                 ref_image_batch = self.R(syn_image_batch)
 
                 figure_path = os.path.join(cfg.train_res_path, 'refined_image_batch_pre_train_%d.png' % index)
                 generate_img_batch(syn_image_batch.data.cpu(), ref_image_batch.data.cpu(),
-                                   real_image_batch.data, figure_path)
+                                   real_image_batch.data.cpu(), figure_path)
                 self.R.train()
 
                 print('Save R_pre to models/R_pre.pkl')
@@ -123,11 +148,13 @@ class Main(object):
         self.D.train()
         self.R.eval()
         for index in range(cfg.d_pretrain):
-            real_image_batch, _ = self.real_loader.__iter__().next()
-            real_image_batch = Variable(real_image_batch).cuda(cfg.cuda_num)
+    
+            real_image_batch = self.get_next_real_batch()
+            syn_image_batch = self.get_next_synth_batch()
 
-            syn_image_batch, _ = self.syn_train_loader.__iter__().next()
-            syn_image_batch = Variable(syn_image_batch).cuda(cfg.cuda_num)
+            if real_image_batch.size(0) != syn_image_batch.size(0):
+                real_image_batch = self.get_next_real_batch()
+                syn_image_batch = self.get_next_synth_batch()
 
             assert real_image_batch.size(0) == syn_image_batch.size(0)
 
@@ -160,7 +187,7 @@ class Main(object):
 
             if (index % cfg.d_pre_per == 0) or (index == cfg.d_pretrain - 1):
                 print('[%d/%d] (D)d_loss:%f  acc_real:%.2f%% acc_ref:%.2f%%'
-                      % (index, cfg.d_pretrain, d_loss.data[0], acc_real, acc_ref))
+                      % (index, cfg.d_pretrain, d_loss.item(), acc_real, acc_ref))
 
         print('Save D_pre to models/D_pre.pkl')
         torch.save(self.D.state_dict(), 'models/D_pre.pkl')
@@ -186,8 +213,7 @@ class Main(object):
             total_acc_adv = 0.0
 
             for index in range(cfg.k_r):
-                syn_image_batch, _ = self.syn_train_loader.__iter__().next()
-                syn_image_batch = Variable(syn_image_batch).cuda(cfg.cuda_num)
+                syn_image_batch = self.get_next_synth_batch()
 
                 ref_image_batch = self.R(syn_image_batch)
                 d_ref_pred = self.D(ref_image_batch).view(-1, 2)
@@ -220,7 +246,7 @@ class Main(object):
             mean_acc_adv = total_acc_adv / cfg.k_r
 
             print('(R)r_loss:%.4f r_loss_reg:%.4f, r_loss_adv:%f(%.2f%%)'
-                  % (mean_r_loss.data[0], mean_r_loss_reg_scale.data[0], mean_r_loss_adv.data[0], mean_acc_adv))
+                  % (mean_r_loss.item(), mean_r_loss_reg_scale.item(), mean_r_loss_adv.item(), mean_acc_adv))
 
             # ========= train the D =========
             self.R.eval()
@@ -229,22 +255,24 @@ class Main(object):
                 p.requires_grad = True
 
             for index in range(cfg.k_d):
-                real_image_batch, _ = self.real_loader.__iter__().next()
-                syn_image_batch, _ = self.syn_train_loader.__iter__().next()
-                assert real_image_batch.size(0) == syn_image_batch.size(0)
+                real_image_batch = self.get_next_real_batch()
+                syn_image_batch = self.get_next_synth_batch()
 
-                real_image_batch = Variable(real_image_batch).cuda(cfg.cuda_num)
-                syn_image_batch = Variable(syn_image_batch).cuda(cfg.cuda_num)
+                if real_image_batch.size(0) != syn_image_batch.size(0):
+                    real_image_batch = self.get_next_real_batch()
+                    syn_image_batch = self.get_next_synth_batch()
+
+                assert real_image_batch.size(0) == syn_image_batch.size(0)
 
                 ref_image_batch = self.R(syn_image_batch)
 
                 # use a history of refined images
                 half_batch_from_image_history = image_history_buffer.get_from_image_history_buffer()
-                image_history_buffer.add_to_image_history_buffer(ref_image_batch.cpu().data.numpy())
+                image_history_buffer.add_to_image_history_buffer(ref_image_batch.cpu().data.numpy().transpose((0, 1, 3, 2)))
 
                 if len(half_batch_from_image_history):
                     torch_type = torch.from_numpy(half_batch_from_image_history)
-                    v_type = Variable(torch_type).cuda(cfg.cuda_num)
+                    v_type = Variable(torch_type).cuda(cfg.cuda_num).transpose(2, 3)
                     ref_image_batch[:cfg.batch_size // 2] = v_type
 
                 d_real_pred = self.D(real_image_batch).view(-1, 2)
@@ -266,17 +294,15 @@ class Main(object):
                 self.opt_D.step()
 
                 print('(D)d_loss:%.4f real_loss:%.4f(%.2f%%) refine_loss:%.4f(%.2f%%)'
-                      % (d_loss.data[0] / 2, d_loss_real.data[0], acc_real, d_loss_ref.data[0], acc_ref))
+                      % (d_loss.item() / 2, d_loss_real.item(), acc_real, d_loss_ref.item(), acc_ref))
 
             if step % cfg.save_per == 0:
                 print('Save two model dict.')
                 torch.save(self.D.state_dict(), cfg.D_path % step)
                 torch.save(self.R.state_dict(), cfg.R_path % step)
 
-                real_image_batch, _ = self.real_loader.__iter__().next()
-                syn_image_batch, _ = self.syn_train_loader.__iter__().next()
-                real_image_batch = Variable(real_image_batch, volatile=True).cuda(cfg.cuda_num)
-                syn_image_batch = Variable(syn_image_batch, volatile=True).cuda(cfg.cuda_num)
+                real_image_batch = self.get_next_real_batch()
+                syn_image_batch = self.get_next_synth_batch()
 
                 self.R.eval()
                 ref_image_batch = self.R(syn_image_batch)
@@ -316,5 +342,3 @@ if __name__ == '__main__':
     obj.train()
 
     obj.generate_all_train_image()
-
-

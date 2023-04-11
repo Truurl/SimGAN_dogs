@@ -34,15 +34,27 @@ class ImageHistoryBuffer(object):
         :param nb_to_add: The number of images from `images` to add to the image history buffer
                           (batch_size / 2 by default).
         """
+        # if not nb_to_add:
+        #     nb_to_add = self.batch_size // 2
+
+        # if len(self.image_history_buffer) < self.max_size:
+        #     np.append(self.image_history_buffer, images[:nb_to_add], axis=0)
+        # elif len(self.image_history_buffer) == self.max_size:
+        #     self.image_history_buffer[:nb_to_add] = images[:nb_to_add]
+        # else:
+        #     assert False
+
+        # np.random.shuffle(self.image_history_buffer)
         if not nb_to_add:
             nb_to_add = self.batch_size // 2
-
         if len(self.image_history_buffer) < self.max_size:
-            np.append(self.image_history_buffer, images[:nb_to_add], axis=0)
+            nb_to_add = min(nb_to_add, self.max_size - len(self.image_history_buffer))
+            # self.image_history_buffer = self.image_history_buffer.append(images[:nb_to_add])
+            self.image_history_buffer = np.append(self.image_history_buffer, images[:nb_to_add], axis=0)
         elif len(self.image_history_buffer) == self.max_size:
             self.image_history_buffer[:nb_to_add] = images[:nb_to_add]
         else:
-            assert False
+            assert False,  "Image history buffer overflow"
 
         np.random.shuffle(self.image_history_buffer)
 

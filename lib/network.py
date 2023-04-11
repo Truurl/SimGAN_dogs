@@ -126,7 +126,7 @@ class Refiner(nn.Module):
 
         res_block = self.resnet_blocks(conv_1)
         output = self.conv_2(res_block)
-        return output
+        return output.clone()
 
 
 class Discriminator(nn.Module):
@@ -141,7 +141,7 @@ class Discriminator(nn.Module):
             nn.LeakyReLU(),
             nn.BatchNorm2d(64),
 
-            nn.AvgPool2d(3, 2, 1),
+            nn.MaxPool2d(3, 2, 1),
 
             nn.Conv2d(64, 32, 3, 1, 1),
             nn.LeakyReLU(),
@@ -161,5 +161,3 @@ class Discriminator(nn.Module):
         convs = self.convs(x)
         output = convs.view(convs.size(0), -1, 2)
         return output
-
-
