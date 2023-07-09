@@ -87,10 +87,13 @@ class ResnetBlock(nn.Module):
         super(ResnetBlock, self).__init__()
         self.convs = nn.Sequential(
             nn.Conv2d(input_features, nb_features, 3, 1, 1),
-            nn.BatchNorm2d(nb_features),
-            nn.LeakyReLU(),
+            # nn.BatchNorm2d(nb_features),
+            # nn.LeakyReLU(),
+            nn.ReLU(),
             nn.Conv2d(nb_features, nb_features, 3, 1, 1),
-            nn.BatchNorm2d(nb_features)
+            # nn.BatchNorm2d(nb_features)
+            # nn.LeakyReLU(),
+            # nn.ReLU()
         )
         self.relu = nn.LeakyReLU()
 
@@ -107,7 +110,8 @@ class Refiner(nn.Module):
 
         self.conv_1 = nn.Sequential(
             nn.Conv2d(in_features, nb_features, 3, stride=1, padding=1),
-            nn.BatchNorm2d(nb_features)
+            nn.ReLU(),
+            # nn.BatchNorm2d(nb_features)
         )
 
         blocks = []
@@ -118,7 +122,7 @@ class Refiner(nn.Module):
 
         self.conv_2 = nn.Sequential(
             nn.Conv2d(nb_features, in_features, 1, 1, 0),
-            nn.Tanh()
+            # nn.Tanh()
         )
 
     def forward(self, x):
@@ -127,6 +131,14 @@ class Refiner(nn.Module):
         res_block = self.resnet_blocks(conv_1)
         output = self.conv_2(res_block)
         return output.clone()
+    
+    def metric_forward(self, x, keys):
+        out = {}
+        out['conv1'] = self.conv_1(x)
+        out['res_block'] = self.resnet_blocks(out['conv1'])
+        out['conv_2'] = self.conv_2(out['res_block'])
+
+        return [out[key] for key in keys]
 
 
 class Discriminator(nn.Module):
@@ -135,26 +147,32 @@ class Discriminator(nn.Module):
 
         self.convs = nn.Sequential(
             nn.Conv2d(input_features, 96, 3, 2, 1),
-            nn.LeakyReLU(),
-            nn.BatchNorm2d(96),
+            nn.ReLU(),
+            # nn.LeakyReLU(),
+            # nn.BatchNorm2d(96),
+
             nn.Conv2d(96, 64, 3, 2, 1),
-            nn.LeakyReLU(),
-            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            # nn.LeakyReLU(),
 
             nn.MaxPool2d(3, 2, 1),
 
             nn.Conv2d(64, 32, 3, 1, 1),
-            nn.LeakyReLU(),
-            nn.BatchNorm2d(32),
-            nn.Conv2d(32, 32, 1, 1, 0),
-            nn.LeakyReLU(),
-            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            # nn.LeakyReLU(),
+            # nn.BatchNorm2d(32),
 
-            nn.AvgPool2d(3, 2, 1),
+            nn.Conv2d(32, 32, 1, 1, 0),
+            nn.ReLU(),
+            # nn.LeakyReLU(),
+            # nn.BatchNorm2d(32),
 
             nn.Conv2d(32, 2, 1, 1, 0),
-            nn.LeakyReLU(),
+            # nn.ReLU(),
+            # nn.LeakyReLU(),
             # nn.BatchNorm2d(2),
+
+            # nn.Softmax()
         )
 
     def forward(self, x):
