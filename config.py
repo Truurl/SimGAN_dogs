@@ -13,6 +13,7 @@ d_lr = 0.0001
 r_lr = 0.0001
 # lambda in paper, the author of the paper said it's 0.01
 delta = 0.01
+delta_kl = 0.1
 
 r_step_size = 1000
 r_gamma = 0.7
@@ -74,3 +75,4 @@ R_path = 'models/R_%d.pkl'
 
 same_pictures_path = '/net/people/plgrid/plgtrurl/SimGAN/SimGAN_pytorch_dogs/calibaration/same'
 different_pictures_path = '/net/people/plgrid/plgtrurl/SimGAN/SimGAN_pytorch_dogs/calibaration/different'
+synth_pictures_path = '/net/people/plgrid/plgtrurl/SimGAN/SimGAN_pytorch_dogs/calibaration/synth'

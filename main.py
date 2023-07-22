@@ -5,7 +5,7 @@ from torch import nn
 from torch.autograd import Variable
 from torchvision import transforms
 from lib.image_history_buffer import ImageHistoryBuffer
-from lib.network import Discriminator, Refiner
+from lib.network import Discriminator, Refiner, KL_Loss
 from lib.image_utils import generate_img_batch, generate_avg_histograms, calc_acc
 import config as cfg
 import os
@@ -17,7 +17,8 @@ import h5py
 from PIL import Image
 import signal, sys
 import glob
-from itertools import combinations
+from itertools import combinations, permutations, product
+import random
 
 def terminate_signal(signalnum, handler):
     print ('Terminate the process')
@@ -109,6 +110,7 @@ class Main(object):
                 'd_lr': cfg.d_lr,
                 'r_lr': cfg.r_lr,
                 'delta': cfg.delta,
+                'delta_kl': cfg.delta_kl,
                 'r_step_size': cfg.r_step_size,
                 'r_gamma': cfg.r_gamma,
                 'd_step_size': cfg.d_step_size,
@@ -182,7 +184,10 @@ class Main(object):
         self.opt_D = torch.optim.Adam(self.D.parameters(), lr=cfg.d_lr)
         self.self_regularization_loss = nn.L1Loss(reduction='sum')
         self.local_adversarial_loss = nn.BCEWithLogitsLoss(reduction="sum")
+        # self.kl_loss = KL_Loss()
+        self.kl_loss = nn.KLDivLoss(reduction="batchmean")
         self.delta = cfg.delta
+        self.kl_loss_delta = cfg.delta_kl
         self.r_lr_scheduler = torch.optim.lr_scheduler.StepLR(self.opt_R, step_size=cfg.r_step_size, gamma=cfg.r_gamma)
         self.d_lr_scheduler = torch.optim.lr_scheduler.StepLR(self.opt_D, step_size=cfg.d_step_size, gamma=cfg.d_gamma)
 
@@ -199,6 +204,11 @@ class Main(object):
             transforms.Resize((cfg.img_width, cfg.img_height)),
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+        
+        self.transform_cal = transforms.Compose([
+            # transforms.Grayscale(),
+            transforms.Resize((cfg.img_width, cfg.img_height)),
+            transforms.ToTensor(),])
 
         # syn_train_folder = torchvision.datasets.ImageFolder(root=cfg.syn_path, transform=transform)
         syn_train_folder = HDF5Dataset(cfg.syn_path, ('synth_img', 'symth_labels'), self.transform)
@@ -418,6 +428,7 @@ class Main(object):
 
         same_images_path = glob.glob(f'{cfg.same_pictures_path}/*.jpg')
         different_images_path = glob.glob(f'{cfg.different_pictures_path}/*.jpg')
+        synth_images_path = glob.glob(f'{cfg.synth_pictures_path}/*.jpg')
 
         same_combinations = combinations(same_images_path, 2)
         different_combinations = combinations(different_images_path, 2)
@@ -425,121 +436,113 @@ class Main(object):
         # print(same_combinations, different_combinations)
 
         # calculate E matrics for pairs of same picturess 
-        same_Es = []
 
-        for images in same_combinations:   
+        # total_covs = [0,0,0,0,0]
+        
+        # # for sample in same_images_path:
+            
+        # images_torch = [self.transform(Image.open(sample)) for sample in same_images_path] 
+        # images_torch = [Variable(img.unsqueeze(0).cuda()) for img in images_torch]
+
+        # covs_means = [Cov_Mean()(A) for A in images_torch]
+        # total_covs = [x+y[0] for x,y in zip(total_covs,covs_means)] # summation of corvariant matrix of each layer over references
+            
+        # avg_covs = [x/len(same_images_path) for x in total_covs]
+        # PCA_basis = [torch.svd(data) for data in avg_covs] 
+        # print(zip(same_images_path, random.shuffle(same_images_path)))
+        # print(random.shuffle(same_images_path))
+            
+        same_ks = []
+        for images in zip(same_images_path, same_images_path):   
+
+            # img1, img2 = [np.asarray(Image.open(img)) for img in images] 
+            images = [Image.open(img) for img in images]
+            images = [self.transform_cal(img) for img in images]
+            # print(f'images.size(): {images[0].size()}')
+            # exit(1)
+            img1, img2 = [img.numpy() for img in images]
+            # img1[1, :, :] += 256
+            # img1[2, :, :] += 512
+
+            # img2[1, :, :] += 256
+            # img2[2, :, :] += 512
+
+            img1_hist = np.histogramdd(np.ravel(img1), bins = 768)[0] / img1.size
+            img2_hist = np.histogramdd(np.ravel(img2), bins = 768)[0] / img2.size
+
+            epsilon = 1e-10
+            P = img1_hist + epsilon
+            Q = img2_hist + epsilon
+            ks = np.where(P != 0, P * np.log2(P / Q), 0).sum()
+
+            same_ks.append(ks)
+
+        different_ks = []
+        
+        for images in zip(same_images_path, different_images_path):   
 
             images = [Image.open(img) for img in images]
-            images_torch = [self.transform(img) for img in images]
-            images_torch = [Variable(img.unsqueeze(0).cuda()) for img in images_torch]
+            images = [self.transform_cal(img) for img in images]
+            # print(f'images.size(): {images[0].size()}')
+            img1, img2 = [img.numpy() for img in images]
+            # img1[1, :, :] += 256
+            # img1[2, :, :] += 512
 
-            results = [Cov_Mean()(A) for A in images_torch]
+            # img2[1, :, :] += 256
+            # img2[2, :, :] += 512
 
-            total_covs = [0,0,0,0,0]
+            img1_hist = np.histogramdd(np.ravel(img1), bins = 768)[0] / img1.size
+            img2_hist = np.histogramdd(np.ravel(img2), bins = 768)[0] / img2.size
 
-            # covs_means = [Cov_Mean()(A) for A in same_images_torch]
-            total_covs= [x+y[0] for x,y in zip(total_covs,results)]
-            avg_covs = [x/len(images_torch) for x in total_covs]
-            
-            PCA_basis = [torch.svd(data) for data in avg_covs] 
-            
-            PCA = [self.PCA_Proj(data,P ,k) for data,P,k in zip(results,PCA_basis,ks)] 
-            LogDet_AoverB  = [ self.Det(syn[0],tar[0]) for syn,tar,k in zip(results,results,ks)]
-        
-            KLs = []
-            # A list of terms needed for KL divergence
-            KL_parts  = [ (torch.trace(torch.mm( y[0].inverse(), x[0])).item(), torch.mm( torch.mm((y[1] -x[1]),  y[0].inverse()), (y[1]-x[1]).t() ).item(),-k, logD.item()) for x,y,logD, k in zip(PCA,PCA,LogDet_AoverB,ks)]
-            KLs.append(np.sum(x) for x in KL_parts )
+            # print(np.histogramdd(np.ravel(img1), bins = 768).shape)
 
-            Es = [-np.log(x)+ np.log(2) for x in KLs[0]]
-            same_Es.append(Es)
-            # print(Es)
+            epsilon = 1e-10
+            P = img1_hist + epsilon
+            Q = img2_hist + epsilon
+            ks = np.where(P != 0, P * np.log2(P / Q), 0).sum()
 
-        different_Es = []
-        # print(10 * '=')
-        
-        for images in different_combinations:   
+            different_ks.append(ks)
+
+        real_synth_ks = []
+
+        for images in zip(synth_images_path, same_images_path):   
 
             images = [Image.open(img) for img in images]
-            images_torch = [self.transform(img) for img in images]
-            images_torch = [Variable(img.unsqueeze(0).cuda()) for img in images_torch]
+            images = [self.transform_cal(img) for img in images]
+            # print(f'images.size(): {images[0].size()}')
+            img1, img2 = [img.numpy() for img in images]
+            # img1[1, :, :] += 256
+            # img1[2, :, :] += 512
 
-            results = [Cov_Mean()(A) for A in images_torch]
+            # img2[1, :, :] += 256
+            # img2[2, :, :] += 512
 
-            total_covs = [0,0,0,0,0]
+            img1_hist = np.histogramdd(np.ravel(img1), bins = 768)[0] / img1.size
+            img2_hist = np.histogramdd(np.ravel(img2), bins = 768)[0] / img2.size
 
-            # covs_means = [Cov_Mean()(A) for A in same_images_torch]
-            # total_covs= [x+y[0] for x,y in zip(total_covs,results)]
-            # avg_covs = [x/len(images_torch) for x in total_covs]
-            
-            # PCA_basis = [torch.svd(data) for data in avg_covs] 
-            
-            # PCA = [self.PCA_Proj(data,P ,k) for data,P,k in zip(results,PCA_basis,ks)] 
-            LogDet_AoverB  = [ self.Det(syn[0],tar[0]) for syn,tar,k in zip(results,results,ks)]
-        
-            KLs = []
-            # A list of terms needed for KL divergence
-            KL_parts  = [ (torch.trace(torch.mm( y[0].inverse(), x[0])).item(), torch.mm( torch.mm((y[1] -x[1]),  y[0].inverse()), (y[1]-x[1]).t() ).item(),-k, logD.item()) for x,y,logD, k in zip(PCA,PCA,LogDet_AoverB,ks)]
-            KLs.append(np.sum(x) for x in KL_parts )
+            # print(np.histogramdd(np.ravel(img1), bins = 768).shape)
 
-            Es = [-np.log(x)+ np.log(2) for x in KLs[0]]
-            different_Es.append(Es)
-            # print(Es)
+            epsilon = 1e-10
+            P = img1_hist + epsilon
+            Q = img2_hist + epsilon
+            ks = np.where(P != 0, P * np.log2(P / Q), 0).sum()
 
-        print(same_Es)
-        print(different_Es)
-        s
-        exit(1)
+            real_synth_ks.append(ks)
 
-        same_images = [Image.open(img) for img in same_images_path]
-        different_images = [Image.open(img) for img in different_images_path]
+        fig, axs = plt.subplots(3, 1, sharey=True, tight_layout=True)
 
-        same_images_torch = [self.transform(img) for img in same_images]
-        different_images_torch = [self.transform(img) for img in different_images]
+        # We can set the number of bins with the *bins* keyword argument.
+        axs[0].hist(same_ks)
+        axs[0].set_xlim([0, 30])
+        axs[0].set_title(f'mean: {np.mean(same_ks):.4f}, std: {np.std(same_ks):.4f}')
+        axs[1].hist(different_ks)
+        axs[2].set_xlim([0, 30])
+        axs[1].set_title(f'mean: {np.mean(different_ks):.4f}, std: {np.std(different_ks):.4f}')
+        axs[2].hist(real_synth_ks)
+        axs[2].set_xlim([0, 30])
+        axs[2].set_title(f'mean: {np.mean(real_synth_ks):.4f}, std: {np.std(real_synth_ks):.4f}')
 
-        same_images_torch = [Variable(img.unsqueeze(0).cuda()) for img in same_images_torch]
-        different_images_torch = [Variable(img.unsqueeze(0).cuda()) for img in different_images_torch]
-        print(len(same_images_torch), len(different_images_torch))
-
-        #calculate PCA basis for same whole image set
-        total_covs = [0,0,0,0,0]
-
-        covs_means = [Cov_Mean()(A) for A in same_images_torch]
-        total_covs= [x+y[0] for x,y in zip(total_covs,covs_means)]
-        avg_covs = [x/len(same_images_torch) for x in total_covs]
-        PCA_basis_same = [torch.svd(data) for data in avg_covs] 
-
-        total_covs = [0,0,0,0,0]
-
-        covs_means = [Cov_Mean()(A) for A in different_images_torch]
-        total_covs= [x+y[0] for x,y in zip(total_covs,covs_means)]
-        avg_covs = [x/len(same_images_torch) for x in total_covs]
-
-        PCA_basis_different = [torch.svd(data) for data in avg_covs] 
-        
-        same_results = [Cov_Mean()(A) for A in same_images_torch]
-        different_results = [Cov_Mean()(A) for A in same_images_torch]
-    
-        PCA_same = [self.PCA_Proj(data,P ,k) for data,P,k in zip(same_results,PCA_basis_same,ks)] 
-        PCA_different = [self.PCA_Proj(data,P ,k) for data,P,k in zip(different_results,PCA_basis_different,ks)] 
-
-        LogDet_AoverB_same = [ self.Det(syn[0],tar[0]) for syn,tar,k in zip(PCA_same,PCA_same,ks)]
-        LogDet_AoverB_different = [ self.Det(syn[0],tar[0]) for syn,tar,k in zip(PCA_different,PCA_same,ks)]
-        
-        KLs_same = []
-        # A list of terms needed for KL divergence
-        KL_same_parts  = [ (torch.trace(torch.mm( y[0].inverse(), x[0])).item(), torch.mm( torch.mm((y[1] -x[1]),  y[0].inverse()), (y[1]-x[1]).t() ).item(),-k, logD.item()) for x,y,logD, k in zip(PCA_same,PCA_same,LogDet_AoverB_same,ks)]
-        KLs_same.append(np.sum(x) for x in KL_same_parts )
-
-        KLs_different = []
-        # A list of terms needed for KL divergence
-        KL_diffeerent_parts  = [ (torch.trace(torch.mm( y[0].inverse(), x[0])).item(), torch.mm( torch.mm((y[1] -x[1]),  y[0].inverse()), (y[1]-x[1]).t() ).item(),-k, logD.item()) for x,y,logD, k in zip(PCA_different,PCA_same,LogDet_AoverB_different,ks)]
-        KLs_different.append(np.sum(x) for x in KL_diffeerent_parts )      
-
-        
-
-        print(KLs_same, KLs_different)
-        exit(1)
+        fig.savefig('./ks_histograms.png')
 
     def train(self):
         logging.info('=' * 50)
@@ -567,9 +570,11 @@ class Main(object):
             total_r_loss_reg_scale = 0.0
             total_r_loss_adv = 0.0
             total_acc_adv = 0.0
-
+            total_r_loss_kl_scale = 0
             for index in range(cfg.k_r):
-                syn_image_batch = self.get_next_synth_batch()
+                # syn_image_batch = self.get_next_synth_batch()
+                # real_image_batch = self.get_next_real_batch()
+                real_image_batch, syn_image_batch = self.get_next_batches()
 
                 ref_image_batch = self.R(syn_image_batch)
                 d_ref_pred = self.D(ref_image_batch).view(-1, 2)
@@ -583,10 +588,15 @@ class Main(object):
                 r_loss_reg_scale = torch.mul(r_loss_reg, self.delta)
                 # r_loss_reg_scale = torch.div(r_loss_reg_scale, cfg.batch_size)
 
+                r_loss_kl = self.kl_loss(ref_image_batch.view(cfg.batch_size, -1), real_image_batch.view(cfg.batch_size, -1))
+                r_loss_kl_scale = torch.abs(torch.mul(r_loss_kl, self.kl_loss_delta))
+
                 r_loss_adv = self.local_adversarial_loss(d_ref_pred, d_real_y)
                 # r_loss_adv = torch.div(r_loss_adv, cfg.batch_size)
+                # print(r_loss_reg_scale, r_loss_kl_scale, r_loss_adv)
 
-                r_loss = r_loss_reg_scale + r_loss_adv
+                r_loss = r_loss_reg_scale + r_loss_kl_scale + r_loss_adv
+                # r_loss = r_loss_reg_scale + r_loss_adv
 
                 self.opt_R.zero_grad()
                 r_loss.backward()
@@ -594,15 +604,20 @@ class Main(object):
 
                 total_r_loss += r_loss / cfg.batch_size
                 total_r_loss_reg_scale += r_loss_reg_scale / cfg.batch_size
+                total_r_loss_kl_scale += r_loss_kl_scale / cfg.batch_size
                 total_r_loss_adv += r_loss_adv / cfg.batch_size
                 total_acc_adv += acc_adv
+
             mean_r_loss = total_r_loss / cfg.k_r
             mean_r_loss_reg_scale = total_r_loss_reg_scale / cfg.k_r
+            mean_r_loss_kl_scale = total_r_loss_kl_scale / cfg.k_r
             mean_r_loss_adv = total_r_loss_adv / cfg.k_r
             mean_acc_adv = total_acc_adv / cfg.k_r
 
-            logging.info('(R)r_loss:%.4f r_loss_reg:%.4f, r_loss_adv:%f(%.2f%%)'
-                  % (mean_r_loss.item(), mean_r_loss_reg_scale.item(), mean_r_loss_adv.item(), mean_acc_adv))
+            logging.info(f'(R)r_loss: {mean_r_loss.item():.4f}, \
+                            r_loss_reg: {mean_r_loss_reg_scale.item():.4f}, \
+                            r_loss_adv: {mean_r_loss_adv.item():.4f}({mean_acc_adv:.2f})')
+
             # ========= train the D =========
             self.R.eval()
             self.D.train()
@@ -681,6 +696,7 @@ class Main(object):
                         "loss": {
                             "adv": mean_r_loss_adv.item(),
                             "l1reg": mean_r_loss_reg_scale.item(),
+                            "kl": mean_r_loss_kl_scale.item(),
                             "total": mean_r_loss.item(),
                         },
                         "accuracy": mean_acc_adv.item(),
