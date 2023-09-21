@@ -7,8 +7,8 @@
 #SBATCH --partition=plgrid-gpu-a100
 #SBATCH --account=plgdyplomanci4-gpu-a100
 
-#SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu
+#SBATCH --cpus-per-task=8
+#SBATCH --gres=gpu:2
 #SBATCH --mem=80G
 
 #SBATCH -C memfs
@@ -24,8 +24,6 @@ mkdir $MEMFS/dataset
 cp /net/tscratch/people/plgtrurl/datasets/*.hdf5 $MEMFS/dataset
 
 cd ~/SimGAN/SimGAN_pytorch
-# pip install torchvision==0.13.1 h5py wandb==0.13.3 --upgrade
-# pip install 
 
 wandb login
 

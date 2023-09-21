@@ -22,7 +22,7 @@ d_gamma = 0.5
 
 img_width = 55
 img_height = 35
-img_channels = 1
+img_channels = 3
 
 # result show in 4 sample per line
 pics_line = 4
@@ -35,7 +35,7 @@ d_pretrain = 200
 # train steps
 train_steps = 100000
 
-batch_size = 1024
+batch_size = 256
 # test_batch_size = 128
 # the history buffer size
 # buffer_size = 12800
@@ -63,8 +63,10 @@ R_path = 'models/R_%d.pkl'
 
 # synthetic image path
 syn_path = f"{os.getenv('MEMFS')}/dataset/UnityEyes.hdf5"
+syn_datasets = ('synth_img', 'symth_labels')
 # real image path
 real_path =f"{os.getenv('MEMFS')}/dataset/MPIIGaze.hdf5"
+real_datesets = ('real_img', 'real_labels')
 # training result path to save
 train_res_path = f"{os.getenv('SCRATCH')}/simgan_results/sgd_batch_{batch_size}_delta_{delta}_D_{d_lr}_{k_d}__R_{r_lr}_{k_r}"
 # final_res_path = 'final_res'
