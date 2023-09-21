@@ -34,24 +34,36 @@ def generate_avg_histograms(syn_batch, ref_batch, real_batch, hist_path):
         img = np.transpose(img, [1, 2, 0])
         return img
 
-    num_images = min(syn_batch.size()[0], ref_batch.size()[0], real_batch.size()[0])
+    num_images = min(syn_batch.size(0), ref_batch.size(0), real_batch.size(0))
+    num_channels = syn_batch.size(1)
+    num_bins = (num_channels * 256) - 1
 
-    synth_histograms = []
-    ref_histograms = []
-    real_histograms = []
+    synth_histograms = np.zeros((num_bins,), dtype=float)
+    ref_histograms = np.zeros((num_bins,), dtype=float)
+    real_histograms = np.zeros((num_bins,), dtype=float)
 
     for index in range(num_images):
         synth_image = tensor_to_numpy(syn_batch[index, :, :, :])
         ref_image = tensor_to_numpy(ref_batch[index, :, :, :])
         real_image = tensor_to_numpy(real_batch[index, :, :, :])
 
-        synth_hist, _ = np.histogram(synth_image.ravel(), bins=256, range=(0, 255))
-        ref_hist, _ = np.histogram(ref_image.ravel(), bins=256, range=(0, 256))
-        real_hist, _ = np.histogram(real_image.ravel(), bins=256, range=(0, 255))
+        # offset channels for one histogram 
+        for chan in range(1, num_channels):
+            synth_image[:, :, 1] += chan * 256
+            ref_image[:, :, 1] += chan * 256
+            real_image[:, :, 1] += chan * 256
 
-        synth_histograms.append(synth_hist)
-        ref_histograms.append(ref_hist)
-        real_histograms.append(real_hist)
+        synth_hist, _ = np.histogram(synth_image.ravel(), bins=num_bins, range=(0, 255))
+        ref_hist, _ = np.histogram(ref_image.ravel(), bins=num_bins, range=(0, 256))
+        real_hist, _ = np.histogram(real_image.ravel(), bins=num_bins, range=(0, 255))
+
+        synth_histograms += synth_hist
+        ref_histograms += ref_hist
+        real_histograms += real_hist
+
+    avg_synth_hist = synth_histograms / num_images
+    avg_ref_hist = ref_histograms / num_images
+    avg_real_hist = real_histograms / num_images
 
     avg_synth_hist = np.mean(synth_histograms, axis=0)
     avg_ref_hist = np.mean(ref_histograms, axis=0)
@@ -59,32 +71,30 @@ def generate_avg_histograms(syn_batch, ref_batch, real_batch, hist_path):
     avg_real_hist[0:10] = 0
 
     relative_entropy = avg_synth_hist * np.log(avg_synth_hist / avg_ref_hist, where=avg_synth_hist != 0)
-    # kl_synth_ref = np.sum(avg_synth_hist * np.log(avg_synth_hist / avg_ref_hist))
     kl_synth_ref = np.sum(relative_entropy, where=np.isfinite(relative_entropy))
 
     relative_entropy = avg_synth_hist * np.log(avg_synth_hist / avg_real_hist, where=avg_synth_hist != 0)
-    # kl_synth_real = np.sum(avg_synth_hist * np.log(avg_synth_hist / avg_real_hist))
     kl_synth_real =  np.sum(relative_entropy, where=np.isfinite(relative_entropy))
 
     relative_entropy = avg_ref_hist * np.log(avg_ref_hist / avg_real_hist, where=avg_ref_hist != 0)
-    # kl_ref_real = np.sum(avg_ref_hist * np.log(avg_ref_hist / avg_real_hist))
     kl_ref_real =  np.sum(relative_entropy, where=np.isfinite(relative_entropy))
-
     
-    fig, axs = plt.subplots(1, 3, figsize=(10, 4))
+    fig, axs = plt.subplots(3, 1, figsize=(16, 16), sharey=True)
     fig.suptitle(f'kl_synth_ref: {kl_synth_ref:.4}, kl_synth_real: {kl_synth_real:.4}, kl_ref_real: {kl_ref_real:.4}')
- 
-    axs[0].plot(avg_synth_hist)
-    axs[0].set_title('synth_avg_hist')
-    
-    axs[1].plot(avg_ref_hist)
-    axs[1].set_title('ref_avg_hist')
-    
-    axs[2].plot(avg_real_hist)
-    axs[2].set_title('real_avg_hist')
 
-    return fig, {'kl_synth_ref': kl_synth_ref, 'kl_synth_real': kl_synth_real, 'kl_ref_real': kl_ref_real}
-    # plt.savefig(hist_path)
+    axs[0].plot(avg_synth_hist, color='blue')
+    axs[0].set_title('avg_synth_hist')
+    axs[0].xlim((0, 768))
+    
+    axs[1].plot(avg_ref_hist, color='blue')
+    axs[1].set_title('avg_ref_hist')
+    axs[1].xlim((0, 768))
+    
+    axs[2].plot(avg_real_hist, color='blue')
+    axs[2].set_title('avg_real_hist')
+    axs[2].xlim((0, 768))
+
+    return fig
 
 def generate_img_batch(syn_batch, ref_batch, real_batch, png_path):
     # syn_batch_type: Tensor, ref_batch_type: Tensor
