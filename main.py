@@ -157,6 +157,21 @@ class Main(object):
         real_image_batch = real_image_batch.to(cfg.dev)
         return real_image_batch
     
+    def reset_iters(self):
+        self.real_image_iter = iter(self.real_loader)
+        self.syn_train_iter = iter(self.syn_train_loader)
+
+    def get_next_batches(self):
+        real_batch = self.get_next_real_batch()
+        synth_batch = self.get_next_synth_batch()
+
+        if real_batch.size(0) != synth_batch.size(0):
+            self.reset_iters()
+            real_batch = self.get_next_real_batch()
+            synth_batch = self.get_next_synth_batch()
+
+        return (real_batch, synth_batch)
+    
     def build_network(self):
         logging.info('=' * 50)
         logging.info('Building network...')
@@ -167,10 +182,10 @@ class Main(object):
             self.R.cuda(cfg.cuda_num)
             self.D.cuda(cfg.cuda_num)
 
-        # self.opt_R = torch.optim.SGD(self.R.parameters(), lr=cfg.r_lr)
-        # self.opt_D = torch.optim.SGD(self.D.parameters(), lr=cfg.d_lr)
-        self.opt_R = torch.optim.Adam(self.R.parameters(), lr=cfg.r_lr)
-        self.opt_D = torch.optim.Adam(self.D.parameters(), lr=cfg.d_lr)
+        self.opt_R = torch.optim.SGD(self.R.parameters(), lr=cfg.r_lr)
+        self.opt_D = torch.optim.SGD(self.D.parameters(), lr=cfg.d_lr)
+        # self.opt_R = torch.optim.Adam(self.R.parameters(), lr=cfg.r_lr)
+        # self.opt_D = torch.optim.Adam(self.D.parameters(), lr=cfg.d_lr)
         # self.self_regularization_loss = nn.L1Loss(size_average=False)
         # self.local_adversarial_loss = nn.CrossEntropyLoss(size_average=True)
         self.self_regularization_loss = nn.L1Loss(reduction='sum')
@@ -187,14 +202,14 @@ class Main(object):
     def load_data(self):
         logging.info('=' * 50)
         logging.info('Loading data...')
-        transform = transforms.Compose([
-            transforms.Grayscale(),
+        self.transform = transforms.Compose([
+            # transforms.Grayscale(),
             transforms.Resize((cfg.img_width, cfg.img_height)),
             transforms.ToTensor(),
             transforms.Normalize((0.5), (0.5))])
 
         # syn_train_folder = torchvision.datasets.ImageFolder(root=cfg.syn_path, transform=transform)
-        syn_train_folder = HDF5Dataset(cfg.syn_path, ('synth_img', 'synth_labels'), transform)
+        syn_train_folder = HDF5Dataset(cfg.syn_path, cfg.syn_datasets, self.transform)
         # print(syn_train_folder)
         self.syn_train_loader = Data.DataLoader(syn_train_folder, batch_size=cfg.batch_size, shuffle=True,
                                                 pin_memory=True, num_workers=4)
@@ -202,7 +217,7 @@ class Main(object):
         logging.info('syn_train_batch %d' % len(self.syn_train_loader))
 
         # real_folder = torchvision.datasets.ImageFolder(root=cfg.real_path, transform=transform)
-        real_folder = HDF5Dataset(cfg.real_path, ('real_img', 'real_labels'), transform)
+        real_folder = HDF5Dataset(cfg.real_path,, cfg.real_datesets, self.transform)
         # real_folder.imgs = real_folder.imgs[:2000]
         self.real_loader = Data.DataLoader(real_folder, batch_size=cfg.batch_size, shuffle=True,
                                            pin_memory=True, num_workers=4)
@@ -268,29 +283,8 @@ class Main(object):
 
         for index in range(cfg.d_pretrain):
     
-            real_image_batch = self.get_next_real_batch()
-            syn_image_batch = self.get_next_synth_batch()
+            real_image_batch, syn_image_batch = self.get_next_batches()
 
-            if real_image_batch.size(0) != syn_image_batch.size(0):
-                real_image_batch = self.get_next_real_batch()
-                syn_image_batch = self.get_next_synth_batch()
-
-            assert real_image_batch.size(0) == syn_image_batch.size(0)
-
-            # d_real_y = torch.zeros(self.d_output_size, dtype=torch.float64, device=cfg.dev)
-            # d_real_y[:, :, 0] = 1
-            # d_ref_y = torch.zeros(self.d_output_size, dtype=torch.float64, device=cfg.dev)
-            # d_ref_y[:, :, 1] = 1
-
-            # random_image_batch = torch.cat((real_image_batch, syn_image_batch), 0)
-            # d_random_y = torch.cat((d_real_y, d_ref_y), 0)
-
-            # rand_idx = torch.randperm(random_image_batch.size(0))
-            # rendom_image_batch = random_image_batch[rand_idx]
-            # d_random_y  = d_random_y[rand_idx].view(-1, 2)
-
-            # d_random_pred = self.D(rendom_image_batch).view(-1,2)
-            # d_loss = self.local_adversarial_loss(d_random_pred, d_random_y)
             # ============ real image D ====================================================
             self.D.train()
             d_real_pred = self.D(real_image_batch).view(-1,2)
@@ -324,21 +318,9 @@ class Main(object):
             if (index % cfg.d_pre_per == 0) or (index == cfg.d_pretrain - 1):
                 logging.info('[%d/%d] (D)d_loss:%f  acc_real:%.2f%% acc_ref:%.2f%%'
                       % (index, cfg.d_pretrain, d_loss.item(), acc_real, acc_ref))
-                # logging.info('[%d/%d] (D)d_loss:%f'
-                #       % (index, cfg.d_pretrain, d_loss.item()))
             
         logging.info('Save D_pre to models/D_pre.pkl')
         torch.save(self.D.state_dict(), f'{cfg.train_res_path}/models/D_pre.pkl')
-        
-        # plt.plot(epochs, d_loss_history)
-        # plt.xlabel('epochs')
-        # plt.ylabel('loss')
-        # plt.title('D loss')
-        # plt.savefig(f'{cfg.train_res_path}/d_loss.png')
-
-    def PCA_Basis_Generater(self):
-
-        for 
 
 
     def train(self):
@@ -349,8 +331,6 @@ class Main(object):
         
         self.val_synth_batch = self.get_next_synth_batch()
         self.val_real_batch = self.get_next_real_batch()
-
-        self.PCA_Basis_Generater()
 
         wandb.watch(self.R)
         wandb.watch(self.D)
@@ -398,13 +378,16 @@ class Main(object):
                 total_r_loss_reg_scale += r_loss_reg_scale / cfg.batch_size
                 total_r_loss_adv += r_loss_adv / cfg.batch_size
                 total_acc_adv += acc_adv
+
             mean_r_loss = total_r_loss / cfg.k_r
             mean_r_loss_reg_scale = total_r_loss_reg_scale / cfg.k_r
             mean_r_loss_adv = total_r_loss_adv / cfg.k_r
             mean_acc_adv = total_acc_adv / cfg.k_r
 
-            logging.info('(R)r_loss:%.4f r_loss_reg:%.4f, r_loss_adv:%f(%.2f%%)'
-                  % (mean_r_loss.item(), mean_r_loss_reg_scale.item(), mean_r_loss_adv.item(), mean_acc_adv))
+            # logging.info(f'(R)r_loss: {mean_r_loss.item():.4f}, \
+            #                 r_loss_reg: {mean_r_loss_reg_scale.item():.4f}, \
+            #                 r_loss_adv: {mean_r_loss_adv.item():.4f}({mean_acc_adv:.2f})')
+            
             # ========= train the D =========
             self.R.eval()
             self.D.train()
@@ -417,14 +400,7 @@ class Main(object):
 
             for index in range(cfg.k_d):
 
-                real_image_batch = self.get_next_real_batch()
-                syn_image_batch = self.get_next_synth_batch()
-
-                if real_image_batch.size(0) != syn_image_batch.size(0):
-                    real_image_batch = self.get_next_real_batch()
-                    syn_image_batch = self.get_next_synth_batch()
-
-                assert real_image_batch.size(0) == syn_image_batch.size(0)
+                real_image_batch, syn_image_batch = self.get_next_batches()
 
                 ref_image_batch = self.R(syn_image_batch)
 
@@ -438,33 +414,20 @@ class Main(object):
                     ref_image_batch[:cfg.batch_size // 2] = v_type
 
                 d_real_pred = self.D(real_image_batch).view(-1,2)
-                # d_real_y = Variable(torch.zeros(d_real_pred.size(), dtype=torch.float)).cuda(cfg.cuda_num)
                 d_real_y = torch.zeros(d_real_pred.size(), dtype=torch.float, device=cfg.dev)
                 d_real_y[:, 0] = 1.
-                # d_real_y = d_real_y.softmax(dim=1)
+                
                 d_loss_real = self.local_adversarial_loss(d_real_pred, d_real_y)
                 # d_loss_real = torch.div(d_loss_real, cfg.batch_size)
+
                 acc_real = calc_acc(d_real_pred, 'real')
 
                 d_ref_pred = self.D(ref_image_batch).view(-1, 2)
-                # d_ref_y = Variable(torch.zeros(d_ref_pred.size())).cuda(cfg.cuda_num)
                 d_ref_y = torch.ones(d_real_pred.size(), dtype=torch.float, device=cfg.dev)
                 d_ref_y[:, 1] = 1.
                 d_loss_ref = self.local_adversarial_loss(d_ref_pred, d_ref_y)
                 # d_loss_ref = torch.div(d_loss_ref, cfg.batch_size)
                 acc_ref = calc_acc(d_ref_pred, 'refine')
-
-                # d_real_pred = self.D(real_image_batch).view(-1, 2)
-                # d_real_y = Variable(torch.zeros(d_real_pred.size(0)).type(torch.LongTensor)).cuda(cfg.cuda_num)
-                # d_loss_real = self.local_adversarial_loss(d_real_pred, d_real_y)
-                # # d_loss_real = torch.div(d_loss_real, cfg.batch_size)
-                # acc_real = calc_acc(d_real_pred, 'real')                    
-
-                # d_ref_pred = self.D(ref_image_batch).view(-1, 2)
-                # d_ref_y = Variable(torch.ones(d_ref_pred.size(0)).type(torch.LongTensor)).cuda(cfg.cuda_num)
-                # d_loss_ref = self.local_adversarial_loss(d_ref_pred, d_ref_y)
-                # # d_loss_ref = torch.div(d_loss_ref, cfg.batch_size)
-                # acc_ref = calc_acc(d_ref_pred, 'refine')
 
                 d_loss = d_loss_real + d_loss_ref
 
@@ -478,8 +441,9 @@ class Main(object):
                 d_loss.backward()
                 self.opt_D.step()
 
-                # logging.info('(D)d_loss:%.4f real_loss:%.4f(%.2f%%) refine_loss:%.4f(%.2f%%)'
-                #       % (d_loss.item() / 2, d_loss_real.item(), acc_real, d_loss_ref.item(), acc_ref))
+                # logging.info(f'(D)d_loss: {total_d_loss.item():.4f}, \
+                #                 d_loss_real: {mean_r_loss_reg_scale.item():.4f}, \
+                #                 d_loss_refine: {mean_r_loss_adv.item():.4f}({mean_acc_adv:.2f})')
 
             mean_d_loss_real = total_d_loss_real / cfg.k_d
             mean_d_loss_ref = total_d_loss_ref / cfg.k_d
@@ -487,41 +451,30 @@ class Main(object):
             mean_d_accuracy_real = total_d_accuracy_real / cfg.k_d
             mean_d_accuracy_ref = total_d_accuracy_ref / cfg.k_d
 
-            # self.r_lr_scheduler.step()
-            # self.d_lr_scheduler.step()
-
-            # wandb.log({'d_loss': mean_d_loss, 'd_real_loss': d_loss_real.item(), 'acc_real': acc_real,
-            #             'refine_loss': d_loss_ref.item(), 'acc_ref': acc_ref,
-            #             'r_loss': mean_r_loss.item(), 'r_loss_reg': mean_r_loss_reg_scale.item(), 
-            #             'r_loss_adv': mean_r_loss_adv.item(), 'mean_acc_adv': mean_acc_adv
-            #             })
-            wandb.log(
-                {
-                    "training_step": step,
-                    "refiner" : {
-                        "loss": {
-                            "adv": mean_r_loss_adv.item(),
-                            "l1reg": mean_r_loss_reg_scale.item(),
-                            "total": mean_r_loss.item(),
-                        },
-                        "accuracy": mean_acc_adv.item(),
+            log_dict = {
+                "training_step": step,
+                "refiner" : {
+                    "loss": {
+                        "adv": mean_r_loss_adv.item(),
+                        "l1reg": mean_r_loss_reg_scale.item(),
+                        "total": mean_r_loss.item(),
                     },
-                    "disciminator": {
-                        "loss": {
-                            "real": mean_d_loss_real,
-                            "ref": mean_d_loss_ref,
-                            "total": mean_d_loss,
-                        },
-                        "accuracy": {
-                            "real": mean_d_accuracy_real,
-                            "ref": mean_d_accuracy_ref,
-                        },
+                    "accuracy": mean_acc_adv.item(),
+                },
+                "disciminator": {
+                    "loss": {
+                        "real": mean_d_loss_real,
+                        "ref": mean_d_loss_ref,
+                        "total": mean_d_loss,
                     },
-                }
-            )
+                    "accuracy": {
+                        "real": mean_d_accuracy_real,
+                        "ref": mean_d_accuracy_ref,
+                    },
+                },
+            }
 
-
-            # wandb.log({'r_loss': mean_r_loss.item(), 'r_loss_reg': mean_r_loss_reg_scale.item(), 'r_loss_adv': mean_r_loss_adv.item(), 'mean_acc_adv': mean_acc_adv})
+            wandb.log(log_dict)
 
             if step % cfg.save_per == 0:
                 logging.info('Save two model dict.')
