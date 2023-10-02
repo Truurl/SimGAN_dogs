@@ -5,6 +5,7 @@ from torch.autograd import Variable
 import config as cfg
 import wandb
 import matplotlib.pyplot as plt
+from lib.metrics import calculate_kl_score
 
 def normalize_img(img):
     # img_type: numpy
@@ -23,7 +24,7 @@ def restore_img(img):
 
 
 def generate_avg_histograms(syn_batch, ref_batch, real_batch, hist_path):
-    
+
     def tensor_to_numpy(img):
         img = img.numpy()
         img += max(-img.min(), 0)
@@ -34,9 +35,9 @@ def generate_avg_histograms(syn_batch, ref_batch, real_batch, hist_path):
         img = np.transpose(img, [1, 2, 0])
         return img
 
-    num_images = min(syn_batch.size(0), ref_batch.size(0), real_batch.size(0))
+    num_images = min(syn_batch.size()[0], ref_batch.size()[0], real_batch.size()[0])
     num_channels = syn_batch.size(1)
-    num_bins = (num_channels * 256) - 1
+    num_bins = (num_channels * 256)
 
     synth_histograms = np.zeros((num_bins,), dtype=float)
     ref_histograms = np.zeros((num_bins,), dtype=float)
@@ -47,15 +48,15 @@ def generate_avg_histograms(syn_batch, ref_batch, real_batch, hist_path):
         ref_image = tensor_to_numpy(ref_batch[index, :, :, :])
         real_image = tensor_to_numpy(real_batch[index, :, :, :])
 
-        # offset channels for one histogram 
+        # offset channels for one continous histogram
         for chan in range(1, num_channels):
-            synth_image[:, :, 1] += chan * 256
-            ref_image[:, :, 1] += chan * 256
-            real_image[:, :, 1] += chan * 256
+            synth_image[:, :, chan] += chan * 256
+            ref_image[:, :, chan] += chan * 256
+            real_image[:, :, chan] += chan * 256
 
-        synth_hist, _ = np.histogram(synth_image.ravel(), bins=num_bins, range=(0, 255))
+        synth_hist, _ = np.histogram(synth_image.ravel(), bins=num_bins, range=(0, 256))
         ref_hist, _ = np.histogram(ref_image.ravel(), bins=num_bins, range=(0, 256))
-        real_hist, _ = np.histogram(real_image.ravel(), bins=num_bins, range=(0, 255))
+        real_hist, _ = np.histogram(real_image.ravel(), bins=num_bins, range=(0, 256))
 
         synth_histograms += synth_hist
         ref_histograms += ref_hist
@@ -65,11 +66,6 @@ def generate_avg_histograms(syn_batch, ref_batch, real_batch, hist_path):
     avg_ref_hist = ref_histograms / num_images
     avg_real_hist = real_histograms / num_images
 
-    avg_synth_hist = np.mean(synth_histograms, axis=0)
-    avg_ref_hist = np.mean(ref_histograms, axis=0)
-    avg_real_hist = np.mean(real_histograms, axis=0)
-    avg_real_hist[0:10] = 0
-
     relative_entropy = avg_synth_hist * np.log(avg_synth_hist / avg_ref_hist, where=avg_synth_hist != 0)
     kl_synth_ref = np.sum(relative_entropy, where=np.isfinite(relative_entropy))
 
@@ -78,23 +74,23 @@ def generate_avg_histograms(syn_batch, ref_batch, real_batch, hist_path):
 
     relative_entropy = avg_ref_hist * np.log(avg_ref_hist / avg_real_hist, where=avg_ref_hist != 0)
     kl_ref_real =  np.sum(relative_entropy, where=np.isfinite(relative_entropy))
-    
+
     fig, axs = plt.subplots(3, 1, figsize=(16, 16), sharey=True)
     fig.suptitle(f'kl_synth_ref: {kl_synth_ref:.4}, kl_synth_real: {kl_synth_real:.4}, kl_ref_real: {kl_ref_real:.4}')
+    # fig.xlim((0, num_bins - 1))
 
     axs[0].plot(avg_synth_hist, color='blue')
     axs[0].set_title('avg_synth_hist')
-    axs[0].xlim((0, 768))
-    
+
     axs[1].plot(avg_ref_hist, color='blue')
     axs[1].set_title('avg_ref_hist')
-    axs[1].xlim((0, 768))
-    
+
     axs[2].plot(avg_real_hist, color='blue')
     axs[2].set_title('avg_real_hist')
-    axs[2].xlim((0, 768))
 
-    return fig
+    return fig, {'kl_synth_ref': kl_synth_ref,
+                 'kl_synth_real': kl_synth_real,
+                 'kl_ref_real': kl_ref_real}
 
 def generate_img_batch(syn_batch, ref_batch, real_batch, png_path):
     # syn_batch_type: Tensor, ref_batch_type: Tensor
@@ -115,8 +111,6 @@ def generate_img_batch(syn_batch, ref_batch, real_batch, png_path):
     a_blank = torch.zeros(cfg.img_height, cfg.img_width*2, 1).numpy().astype(np.uint8)
 
     nb = syn_batch.size(0)
-    # print(syn_batch.size())
-    # print(ref_batch.size())
     vertical_list = []
 
     for index in range(0, nb, cfg.pics_line):
@@ -130,15 +124,11 @@ def generate_img_batch(syn_batch, ref_batch, real_batch, png_path):
         ref_line = ref_batch[st:end]
         diff_line = ref_batch[st:end] - syn_batch[st:end]
         real_line = real_batch[st:end]
-        # print('====>', nb)
-        # print(syn_line.size())
-        # print(ref_line.size())
         nb_per_line = syn_line.size(0)
 
         line_list = []
 
         for i in range(nb_per_line):
-            #print(i, len(syn_line))
             syn_np = tensor_to_numpy(syn_line[i])
             ref_np = tensor_to_numpy(ref_line[i])
             diff_np = tensor_to_numpy(diff_line[i])
@@ -151,20 +141,13 @@ def generate_img_batch(syn_batch, ref_batch, real_batch, png_path):
         while fill_nb:
             line_list.append(a_blank)
             fill_nb -= 1
-        # print(len(line_list))
-        # print(line_list[0].shape)
-        # print(line_list[1].shape)
-        # print(line_list[2].shape)
-        # print(line_list[3].shape)
-        # print(line_list[4].shape)
+
         line = np.concatenate(line_list, axis=1)
-        # print(line.dtype)
         vertical_list.append(line)
 
     imgs = np.concatenate(vertical_list, axis=0)
     if imgs.shape[-1] == 1:
         imgs = np.tile(imgs, [1, 1, 3])
-    # print(imgs.shape, imgs.dtype)
     img = Image.fromarray(imgs)
     return img
 
