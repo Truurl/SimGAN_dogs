@@ -5,8 +5,9 @@ from torch import nn
 from torch.autograd import Variable
 from torchvision import transforms
 from lib.image_history_buffer import ImageHistoryBuffer
-from lib.network import Discriminator, Refiner
+from lib.network import Discriminator, Refiner, InceptionV3
 from lib.image_utils import generate_img_batch, generate_avg_histograms, calc_acc
+from lib.metrics import calculate_activation_statistics, calculate_frechet_distance, calculate_fretchet, calculate_kl_score
 import config as cfg
 import os
 import matplotlib.pyplot as plt
@@ -24,7 +25,7 @@ def terminate_signal(signalnum, handler):
     sys.exit()
 
 class HDF5Dataset(Data.Dataset):
-    
+
 
     def __init__(self, file_path, datasets: tuple, transform=None):
         super().__init__()
@@ -45,42 +46,19 @@ class HDF5Dataset(Data.Dataset):
     def __getitem__(self, index) :
         if not hasattr(self, '_hf'):
             self._open_hdf5()
-        # print(index)
-        # with h5py.File(self.file_path, 'r') as file:
 
-        #     x = file[self.datasets[0]][index]
-        #     x = Image.fromarray(np.array(x))
-
-        #     if self.transform:
-        #         x = self.transform(x)
-        #     else:
-        #         x = torch.from_numpy(x)
-
-        #     y = file[self.datasets[1]][index]
-        #     target = torch.zeros(1,2)
-        #     target = target[:, y] = 1
-
-        # return (x, y)
-        # get data
         x = self._hf[self.datasets[0]][index]
         x = Image.fromarray(np.array(x))
-        # x = self.data[index]
-        # x = Image.fromarray(np.array(x))
+
         if self.transform:
             x = self.transform(x)
         else:
             x = torch.from_numpy(x)
 
-        # y = self._hf[self.datasets[1]][index]
-        # y = self.target
-        # target = torch.zeros(1,2)
-        # y = target[:, y] = 1
-        # return (x, y)
         return x
 
     def __len__(self):
         return self.length
-    
 
 class Main(object):
     def __init__(self):
@@ -138,7 +116,7 @@ class Main(object):
             syn_image_batch  = next(self.syn_train_iter)
         except StopIteration:
             # StopIteration is thrown if dataset ends
-            # reinitialize data loader 
+            # reinitialize data loader
             self.syn_train_iter = iter(self.syn_train_loader)
             syn_image_batch = next(self.syn_train_iter)
 
@@ -150,7 +128,7 @@ class Main(object):
             real_image_batch = next(self.real_image_iter)
         except StopIteration:
             # StopIteration is thrown if dataset ends
-            # reinitialize data loader 
+            # reinitialize data loader
             self.real_image_iter = iter(self.real_loader)
             real_image_batch  = next(self.real_image_iter)
 
@@ -171,25 +149,31 @@ class Main(object):
             synth_batch = self.get_next_synth_batch()
 
         return (real_batch, synth_batch)
-    
+
     def build_network(self):
         logging.info('=' * 50)
         logging.info('Building network...')
-        self.R = Refiner(4, cfg.img_channels, nb_features=64)
+        self.R = Refiner(2, cfg.img_channels, nb_features=128)
         self.D = Discriminator(input_features=cfg.img_channels)
+
+        block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[2048]
+        self.inception_model = InceptionV3([block_idx])
+
 
         if cfg.cuda_use:
             self.R.cuda(cfg.cuda_num)
             self.D.cuda(cfg.cuda_num)
+            # self.inception_model.cuda(cfg.cuda_num)
 
         self.opt_R = torch.optim.SGD(self.R.parameters(), lr=cfg.r_lr)
         self.opt_D = torch.optim.SGD(self.D.parameters(), lr=cfg.d_lr)
+
         # self.opt_R = torch.optim.Adam(self.R.parameters(), lr=cfg.r_lr)
         # self.opt_D = torch.optim.Adam(self.D.parameters(), lr=cfg.d_lr)
         # self.self_regularization_loss = nn.L1Loss(size_average=False)
         # self.local_adversarial_loss = nn.CrossEntropyLoss(size_average=True)
-        self.self_regularization_loss = nn.L1Loss(reduction='sum')
-        self.local_adversarial_loss = nn.BCEWithLogitsLoss(reduction="sum")
+        self.self_regularization_loss = nn.L1Loss(reduction='mean')
+        self.local_adversarial_loss = nn.BCEWithLogitsLoss(reduction="mean")
         self.delta = cfg.delta
         self.r_lr_scheduler = torch.optim.lr_scheduler.StepLR(self.opt_R, step_size=cfg.r_step_size, gamma=cfg.r_gamma)
         self.d_lr_scheduler = torch.optim.lr_scheduler.StepLR(self.opt_D, step_size=cfg.d_step_size, gamma=cfg.d_gamma)
@@ -206,7 +190,8 @@ class Main(object):
             # transforms.Grayscale(),
             transforms.Resize((cfg.img_width, cfg.img_height)),
             transforms.ToTensor(),
-            transforms.Normalize((0.5), (0.5))])
+            # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            ])
 
         # syn_train_folder = torchvision.datasets.ImageFolder(root=cfg.syn_path, transform=transform)
         syn_train_folder = HDF5Dataset(cfg.syn_path, cfg.syn_datasets, self.transform)
@@ -217,7 +202,7 @@ class Main(object):
         logging.info('syn_train_batch %d' % len(self.syn_train_loader))
 
         # real_folder = torchvision.datasets.ImageFolder(root=cfg.real_path, transform=transform)
-        real_folder = HDF5Dataset(cfg.real_path,, cfg.real_datesets, self.transform)
+        real_folder = HDF5Dataset(cfg.real_path, cfg.real_datasets, self.transform)
         # real_folder.imgs = real_folder.imgs[:2000]
         self.real_loader = Data.DataLoader(real_folder, batch_size=cfg.batch_size, shuffle=True,
                                            pin_memory=True, num_workers=4)
@@ -253,7 +238,6 @@ class Main(object):
             if (index % cfg.r_pre_per == 0) or (index == cfg.r_pretrain - 1):
                 # figure_name = 'refined_image_batch_pre_train_step_{}.png'.format(index)
                 logging.info('[%d/%d] (R)reg_loss: %.4f' % (index, cfg.r_pretrain, r_loss.item()))
-                
                 syn_image_batch = self.get_next_synth_batch()
                 real_image_batch = self.get_next_real_batch()
 
@@ -277,12 +261,10 @@ class Main(object):
 
         # and Dφ for 200 steps (one mini-batch for refined images, another for real)
         logging.info('pre-training the discriminator network %d times...' % cfg.r_pretrain)
-        
         self.D.train()
         self.R.eval()
 
         for index in range(cfg.d_pretrain):
-    
             real_image_batch, syn_image_batch = self.get_next_batches()
 
             # ============ real image D ====================================================
@@ -292,14 +274,12 @@ class Main(object):
             d_real_y[:, 0] = 1
 
             acc_real = calc_acc(d_real_pred, 'real')
-            
             d_loss_real = self.local_adversarial_loss(d_real_pred, d_real_y)
             # d_loss_real = torch.div(d_loss_real, cfg.batch_size)
 
             # ============ syn image D ====================================================
             self.R.eval()
             ref_image_batch = self.R(syn_image_batch)
-            
             self.D.train()
             d_ref_pred = self.D(ref_image_batch).view(-1,2)
             d_ref_y = torch.zeros(d_ref_pred.size(), dtype=torch.float, device=cfg.dev)
@@ -308,7 +288,6 @@ class Main(object):
             acc_ref = calc_acc(d_ref_pred, 'refine')
             d_loss_ref = self.local_adversarial_loss(d_ref_pred, d_ref_y)
             d_loss_ref = torch.div(d_loss_ref, cfg.batch_size)
-            
             d_loss = d_loss_real + d_loss_ref
 
             self.opt_D.zero_grad()
@@ -318,7 +297,7 @@ class Main(object):
             if (index % cfg.d_pre_per == 0) or (index == cfg.d_pretrain - 1):
                 logging.info('[%d/%d] (D)d_loss:%f  acc_real:%.2f%% acc_ref:%.2f%%'
                       % (index, cfg.d_pretrain, d_loss.item(), acc_real, acc_ref))
-            
+
         logging.info('Save D_pre to models/D_pre.pkl')
         torch.save(self.D.state_dict(), f'{cfg.train_res_path}/models/D_pre.pkl')
 
@@ -328,7 +307,6 @@ class Main(object):
         logging.info('Training...')
         image_history_buffer = ImageHistoryBuffer((0, cfg.img_channels, cfg.img_height, cfg.img_width),
                                                   cfg.buffer_size * 10, cfg.batch_size)
-        
         self.val_synth_batch = self.get_next_synth_batch()
         self.val_real_batch = self.get_next_real_batch()
 
@@ -374,10 +352,15 @@ class Main(object):
                 r_loss.backward()
                 self.opt_R.step()
 
-                total_r_loss += r_loss / cfg.batch_size
-                total_r_loss_reg_scale += r_loss_reg_scale / cfg.batch_size
-                total_r_loss_adv += r_loss_adv / cfg.batch_size
+                total_r_loss += r_loss
+                total_r_loss_reg_scale += r_loss_reg_scale
+                total_r_loss_adv += r_loss_adv
                 total_acc_adv += acc_adv
+
+                # total_r_loss += r_loss / cfg.batch_size
+                # total_r_loss_reg_scale += r_loss_reg_scale / cfg.batch_size
+                # total_r_loss_adv += r_loss_adv / cfg.batch_size
+                # total_acc_adv += acc_adv
 
             mean_r_loss = total_r_loss / cfg.k_r
             mean_r_loss_reg_scale = total_r_loss_reg_scale / cfg.k_r
@@ -387,7 +370,7 @@ class Main(object):
             # logging.info(f'(R)r_loss: {mean_r_loss.item():.4f}, \
             #                 r_loss_reg: {mean_r_loss_reg_scale.item():.4f}, \
             #                 r_loss_adv: {mean_r_loss_adv.item():.4f}({mean_acc_adv:.2f})')
-            
+
             # ========= train the D =========
             self.R.eval()
             self.D.train()
@@ -416,14 +399,13 @@ class Main(object):
                 d_real_pred = self.D(real_image_batch).view(-1,2)
                 d_real_y = torch.zeros(d_real_pred.size(), dtype=torch.float, device=cfg.dev)
                 d_real_y[:, 0] = 1.
-                
                 d_loss_real = self.local_adversarial_loss(d_real_pred, d_real_y)
                 # d_loss_real = torch.div(d_loss_real, cfg.batch_size)
 
                 acc_real = calc_acc(d_real_pred, 'real')
 
                 d_ref_pred = self.D(ref_image_batch).view(-1, 2)
-                d_ref_y = torch.ones(d_real_pred.size(), dtype=torch.float, device=cfg.dev)
+                d_ref_y = torch.zeros(d_real_pred.size(), dtype=torch.float, device=cfg.dev)
                 d_ref_y[:, 1] = 1.
                 d_loss_ref = self.local_adversarial_loss(d_ref_pred, d_ref_y)
                 # d_loss_ref = torch.div(d_loss_ref, cfg.batch_size)
@@ -431,11 +413,17 @@ class Main(object):
 
                 d_loss = d_loss_real + d_loss_ref
 
-                total_d_loss_real += d_loss_real.item() / cfg.batch_size
-                total_d_loss_ref += d_loss_ref.item() / cfg.batch_size
-                total_d_loss += d_loss.item() / cfg.batch_size
+                total_d_loss_real += d_loss_real.item()
+                total_d_loss_ref += d_loss_ref.item()
+                total_d_loss += d_loss.item()
                 total_d_accuracy_real += acc_real
                 total_d_accuracy_ref += acc_ref
+
+                # total_d_loss_real += d_loss_real.item() / cfg.batch_size
+                # total_d_loss_ref += d_loss_ref.item() / cfg.batch_size
+                # total_d_loss += d_loss.item() / cfg.batch_size
+                # total_d_accuracy_real += acc_real
+                # total_d_accuracy_ref += acc_ref
 
                 self.D.zero_grad()
                 d_loss.backward()
@@ -451,7 +439,10 @@ class Main(object):
             mean_d_accuracy_real = total_d_accuracy_real / cfg.k_d
             mean_d_accuracy_ref = total_d_accuracy_ref / cfg.k_d
 
-            log_dict = {
+
+            ref_image_batch = self.R(self.val_synth_batch)
+
+            l1_dict = {
                 "training_step": step,
                 "refiner" : {
                     "loss": {
@@ -474,6 +465,31 @@ class Main(object):
                 },
             }
 
+            if step % cfg.save_per == 0:
+                self.inception_model.to(cfg.dev)
+                kl_score = calculate_kl_score(self.val_synth_batch.cpu().data,
+                                            ref_image_batch.cpu().data,
+                                            self.val_real_batch.cpu().data)
+                fretchet_dist_real_ref = calculate_fretchet(real_image_batch,
+                                                            ref_image_batch,
+                                                            self.inception_model)
+                fretchet_dist_synth_ref = calculate_fretchet(syn_image_batch,
+                                                            ref_image_batch,
+                                                            self.inception_model)
+
+                fretchet_score = {
+                    "fretcher" :{
+                        'real-ref': fretchet_dist_real_ref,
+                        'synth-ref': fretchet_dist_synth_ref,
+                    }
+
+                }
+                log_dict = kl_score | l1_dict | fretchet_score
+
+                self.inception_model.to('cpu')
+            else:
+                log_dict = l1_dict
+
             wandb.log(log_dict)
 
             if step % cfg.save_per == 0:
@@ -482,7 +498,6 @@ class Main(object):
                 torch.save(self.R.state_dict(), f'{cfg.train_res_path}/{cfg.R_path}' % step)
 
                 self.R.eval()
-                ref_image_batch = self.R(self.val_synth_batch)
                 self.generate_batch_train_image(self.val_synth_batch, ref_image_batch, self.val_real_batch, step_index=step)
 
 
@@ -494,12 +509,13 @@ class Main(object):
         pic_path = os.path.join(cfg.train_res_path, 'step_%d.png' % step_index)
         hist_path = os.path.join(cfg.train_res_path, 'step_%d_hist.png' % step_index)
         img = generate_img_batch(syn_image_batch.cpu().data, ref_image_batch.cpu().data, real_image_batch.cpu().data, pic_path)
-        hist, kl_score = generate_avg_histograms(syn_image_batch.cpu().data, ref_image_batch.cpu().data, real_image_batch.cpu().data, hist_path)
+        hist, kl_scores = generate_avg_histograms(syn_image_batch.cpu().data, ref_image_batch.cpu().data, real_image_batch.cpu().data, hist_path)
         # generate_img_batch
+
         img.save(pic_path, 'png')
         hist.savefig(hist_path)
-        wandb.log(kl_score)
-        wandb.log({f"prewiev": wandb.Image(img), f"prewiev_hist": wandb.Image(hist)})
+
+        wandb.log({f"preview": wandb.Image(img), f"preview_hist": wandb.Image(hist)})
         logging.info('=' * 50)
         plt.close(hist)
 
