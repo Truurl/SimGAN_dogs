@@ -1,9 +1,11 @@
 import torch
-import torch.utils.data as Data
-import torchvision
 from torch import nn
+import torch.utils.data as Data
 from torch.autograd import Variable
+import torchvision
 from torchvision import transforms
+
+from lib.dateset import HDF5Dataset, CacheHDF5Dataset
 from lib.image_history_buffer import ImageHistoryBuffer
 from lib.network import Discriminator, Refiner, InceptionV3
 from lib.image_utils import generate_img_batch, generate_avg_histograms, calc_acc
@@ -23,42 +25,6 @@ def terminate_signal(signalnum, handler):
     # save results, whatever...
     wandb.finish()
     sys.exit()
-
-class HDF5Dataset(Data.Dataset):
-
-
-    def __init__(self, file_path, datasets: tuple, transform=None):
-        super().__init__()
-
-        self.file_path = file_path
-        self.datasets = datasets
-
-        self.transform = transform
-
-        with h5py.File(self.file_path) as file:
-            self.length = len(file[self.datasets[0]])
-            self.target = file[self.datasets[1]][0]
-            # print(f'self.target: {self.target}')
-
-    def _open_hdf5(self):
-        self._hf = h5py.File(self.file_path, 'r')
-
-    def __getitem__(self, index) :
-        if not hasattr(self, '_hf'):
-            self._open_hdf5()
-
-        x = self._hf[self.datasets[0]][index]
-        x = Image.fromarray(np.array(x))
-
-        if self.transform:
-            x = self.transform(x)
-        else:
-            x = torch.from_numpy(x)
-
-        return x
-
-    def __len__(self):
-        return self.length
 
 class Main(object):
     def __init__(self):
@@ -107,7 +73,14 @@ class Main(object):
                 'buffer_size': cfg.buffer_size,
                 'k_d': cfg.k_d,
                 'k_r': cfg.k_r,
-            }
+                "nb_features": cfg.nb_features,
+                "refiner_arch":
+                {
+                    "n_resnets": cfg.n_resnets,
+                    "n_heads": cfg.n_heads
+                }
+            },
+            name=f'res-{cfg.n_resnets} heads-{cfg.n_heads}'
 )
 
 
@@ -134,7 +107,7 @@ class Main(object):
 
         real_image_batch = real_image_batch.to(cfg.dev)
         return real_image_batch
-    
+
     def reset_iters(self):
         self.real_image_iter = iter(self.real_loader)
         self.syn_train_iter = iter(self.syn_train_loader)
@@ -153,11 +126,13 @@ class Main(object):
     def build_network(self):
         logging.info('=' * 50)
         logging.info('Building network...')
-        self.R = Refiner(2, cfg.img_channels, nb_features=128)
+        self.R = Refiner(cfg.n_resnets, cfg.img_channels,
+                         nb_features=cfg.nb_features,
+                         num_heads=cfg.n_heads)
         self.D = Discriminator(input_features=cfg.img_channels)
 
-        block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[2048]
-        self.inception_model = InceptionV3([block_idx])
+        # block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[2048]
+        # self.inception_model = InceptionV3([block_idx])
 
 
         if cfg.cuda_use:
@@ -165,47 +140,67 @@ class Main(object):
             self.D.cuda(cfg.cuda_num)
             # self.inception_model.cuda(cfg.cuda_num)
 
-        self.opt_R = torch.optim.SGD(self.R.parameters(), lr=cfg.r_lr)
-        self.opt_D = torch.optim.SGD(self.D.parameters(), lr=cfg.d_lr)
+        # self.opt_R = torch.optim.SGD(self.R.parameters(), lr=cfg.r_lr)
+        # self.opt_D = torch.optim.SGD(self.D.parameters(), lr=cfg.d_lr)
 
-        # self.opt_R = torch.optim.Adam(self.R.parameters(), lr=cfg.r_lr)
-        # self.opt_D = torch.optim.Adam(self.D.parameters(), lr=cfg.d_lr)
+        self.opt_R = torch.optim.Adam(self.R.parameters(), lr=cfg.r_lr)
+        self.opt_D = torch.optim.Adam(self.D.parameters(), lr=cfg.d_lr)
         # self.self_regularization_loss = nn.L1Loss(size_average=False)
         # self.local_adversarial_loss = nn.CrossEntropyLoss(size_average=True)
-        self.self_regularization_loss = nn.L1Loss(reduction='mean')
-        self.local_adversarial_loss = nn.BCEWithLogitsLoss(reduction="mean")
+        self.self_regularization_loss = nn.L1Loss(reduction='sum')
+        self.local_adversarial_loss = nn.BCEWithLogitsLoss(reduction="sum")
         self.delta = cfg.delta
-        self.r_lr_scheduler = torch.optim.lr_scheduler.StepLR(self.opt_R, step_size=cfg.r_step_size, gamma=cfg.r_gamma)
-        self.d_lr_scheduler = torch.optim.lr_scheduler.StepLR(self.opt_D, step_size=cfg.d_step_size, gamma=cfg.d_gamma)
+        self.r_lr_scheduler = torch.optim.lr_scheduler.StepLR(self.opt_R,
+                                    step_size=cfg.r_step_size,
+                                    gamma=cfg.r_gamma)
+        self.d_lr_scheduler = torch.optim.lr_scheduler.StepLR(self.opt_D,
+                                    step_size=cfg.d_step_size,
+                                    gamma=cfg.d_gamma)
 
         self.val_real_batch = None
         self.val_synth_batch = None
 
         self.d_output_size = self.D(torch.rand((cfg.batch_size, cfg.img_channels, cfg.img_height, cfg.img_width), device=cfg.dev)).size()
 
+    def print_training_setup(self):
+        print('*** DATA ***')
+        print(f'transform: {self.transform}')
+        print(f'self.syn_train_loader: len: {len(self.syn_train_loader)} {self.syn_train_loader}')
+        print(f'self.real_loader: len: {len(self.real_loader)} {self.real_loader}')
+        print('*** OPTS AND LOSSES')
+        print(f'self.opt_R: {self.opt_R}')
+        print(f'self.opt_D: {self.opt_D}')
+        print(f'self.self_regularization_loss: {self.self_regularization_loss}')
+        print(f'self.local_adversarial_loss: {self.local_adversarial_loss}')
+        print('*** MODELS ***')
+        print(f'self.R\n{self.R}')
+        print("\n\n")
+        print(f'self.D\n{self.D}')
+        print("\n\n")
+
+
     def load_data(self):
         logging.info('=' * 50)
         logging.info('Loading data...')
         self.transform = transforms.Compose([
-            # transforms.Grayscale(),
-            transforms.Resize((cfg.img_width, cfg.img_height)),
+            transforms.Grayscale(),
             transforms.ToTensor(),
-            # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            transforms.Resize((cfg.img_width, cfg.img_height)),
+            transforms.Normalize(cfg.img_channels * (0.5,), cfg.img_channels * (0.5,))
             ])
 
         # syn_train_folder = torchvision.datasets.ImageFolder(root=cfg.syn_path, transform=transform)
         syn_train_folder = HDF5Dataset(cfg.syn_path, cfg.syn_datasets, self.transform)
-        # print(syn_train_folder)
-        self.syn_train_loader = Data.DataLoader(syn_train_folder, batch_size=cfg.batch_size, shuffle=True,
-                                                pin_memory=True, num_workers=4)
+        self.syn_train_loader = Data.DataLoader(syn_train_folder, batch_size=cfg.batch_size,
+                                                shuffle=False, pin_memory=True, num_workers=4)
         self.syn_train_iter = iter(self.syn_train_loader)
         logging.info('syn_train_batch %d' % len(self.syn_train_loader))
 
         # real_folder = torchvision.datasets.ImageFolder(root=cfg.real_path, transform=transform)
         real_folder = HDF5Dataset(cfg.real_path, cfg.real_datasets, self.transform)
         # real_folder.imgs = real_folder.imgs[:2000]
-        self.real_loader = Data.DataLoader(real_folder, batch_size=cfg.batch_size, shuffle=True,
-                                           pin_memory=True, num_workers=4)
+        self.real_loader = Data.DataLoader(real_folder, batch_size=cfg.batch_size,
+                                           shuffle=False, pin_memory=True, num_workers=4)
         self.real_image_iter = iter(self.real_loader)
         logging.info('real_batch %d' % len(self.real_loader))
 
@@ -280,6 +275,8 @@ class Main(object):
             # ============ syn image D ====================================================
             self.R.eval()
             ref_image_batch = self.R(syn_image_batch)
+            # print(ref_image_batch.size())
+            # exit(1)
             self.D.train()
             d_ref_pred = self.D(ref_image_batch).view(-1,2)
             d_ref_y = torch.zeros(d_ref_pred.size(), dtype=torch.float, device=cfg.dev)
@@ -313,6 +310,8 @@ class Main(object):
         wandb.watch(self.R)
         wandb.watch(self.D)
 
+        self.print_training_setup()
+
         for step in range(cfg.train_steps):
             logging.info('Step[%d/%d]' % (step, cfg.train_steps))
 
@@ -341,6 +340,7 @@ class Main(object):
 
                 r_loss_reg = self.self_regularization_loss(ref_image_batch, syn_image_batch)
                 r_loss_reg_scale = torch.mul(r_loss_reg, self.delta)
+                # r_loss_reg_scale = torch.mul(r_loss_reg, 1)
                 # r_loss_reg_scale = torch.div(r_loss_reg_scale, cfg.batch_size)
 
                 r_loss_adv = self.local_adversarial_loss(d_ref_pred, d_real_y)
@@ -466,27 +466,28 @@ class Main(object):
             }
 
             if step % cfg.save_per == 0:
-                self.inception_model.to(cfg.dev)
+                # self.inception_model.to(cfg.dev)
                 kl_score = calculate_kl_score(self.val_synth_batch.cpu().data,
                                             ref_image_batch.cpu().data,
                                             self.val_real_batch.cpu().data)
-                fretchet_dist_real_ref = calculate_fretchet(real_image_batch,
-                                                            ref_image_batch,
-                                                            self.inception_model)
-                fretchet_dist_synth_ref = calculate_fretchet(syn_image_batch,
-                                                            ref_image_batch,
-                                                            self.inception_model)
+                # fretchet_dist_real_ref = calculate_fretchet(real_image_batch,
+                #                                             ref_image_batch,
+                #                                             self.inception_model)
+                # fretchet_dist_synth_ref = calculate_fretchet(syn_image_batch,
+                #                                             ref_image_batch,
+                #                                             self.inception_model)
 
-                fretchet_score = {
-                    "fretcher" :{
-                        'real-ref': fretchet_dist_real_ref,
-                        'synth-ref': fretchet_dist_synth_ref,
-                    }
+                # fretchet_score = {
+                #     "fretcher" :{
+                #         'real-ref': fretchet_dist_real_ref,
+                #         'synth-ref': fretchet_dist_synth_ref,
+                #     }
 
-                }
+                # }
+                fretchet_score = {}
                 log_dict = kl_score | l1_dict | fretchet_score
 
-                self.inception_model.to('cpu')
+                # self.inception_model.to('cpu')
             else:
                 log_dict = l1_dict
 
