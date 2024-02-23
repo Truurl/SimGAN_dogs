@@ -25,7 +25,7 @@ class ResnetBlock(nn.Module):
 
 
 class Refiner(nn.Module):
-    def __init__(self, block_num, in_features, nb_features=64):
+    def __init__(self, block_num, in_features, nb_features=64, num_heads=4):
         super(Refiner, self).__init__()
 
         self.conv_1 = nn.Sequential(
@@ -40,15 +40,27 @@ class Refiner(nn.Module):
 
         self.resnet_blocks = nn.Sequential(*blocks)
 
+        self.attention = nn.MultiheadAttention(embed_dim=nb_features, num_heads=num_heads)
+
         self.conv_2 = nn.Sequential(
             nn.Conv2d(nb_features, in_features, 1, 1, 0),
-            # nn.Tanh()
+            nn.Tanh()
         )
 
     def forward(self, x):
         conv_1 = self.conv_1(x)
 
         res_block = self.resnet_blocks(conv_1)
+
+        # batch_size, channels, height, width = res_block.shape
+        # query = res_block.view(batch_size, channels, -1).permute(0, 2, 1)
+        # Apply multi-head self-attention
+        # att_output, _ = self.attention(query, query, query)
+
+        # Reshape the output back to the original shape
+        # att_output = att_output.permute(0, 2, 1).view(batch_size, channels, height, width)
+
+
         output = self.conv_2(res_block)
         return output.clone()
 
@@ -81,18 +93,20 @@ class Discriminator(nn.Module):
             # nn.BatchNorm2d(32),
 
             nn.Conv2d(32, 2, 1, 1, 0),
-            # nn.ReLU(),
+            nn.ReLU(),
             # nn.LeakyReLU(),
             # nn.BatchNorm2d(2),
 
+            # IF USES BCEWithLogits DON"T UNCOMMENT
             # nn.Softmax()
         )
 
     def forward(self, x):
         convs = self.convs(x)
-        output = convs.view(convs.size(0), -1, 2)
+        # print(convs.size())
+        output = convs.reshape(convs.size(0), -1, 2)
         return output
-    
+
 class InceptionV3(nn.Module):
     """Pretrained InceptionV3 network returning feature maps"""
 
@@ -113,7 +127,7 @@ class InceptionV3(nn.Module):
                  resize_input=True,
                  normalize_input=True,
                  requires_grad=False):
-        
+
         super(InceptionV3, self).__init__()
 
         self.resize_input = resize_input
@@ -126,7 +140,7 @@ class InceptionV3(nn.Module):
 
         self.blocks = nn.ModuleList()
 
-        
+
         inception = models.inception_v3(pretrained=True)
 
         # Block 0: input to maxpool1
@@ -207,4 +221,3 @@ class InceptionV3(nn.Module):
                 break
 
         return outp
-    
