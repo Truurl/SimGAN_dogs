@@ -1,6 +1,7 @@
 from torch import nn
 import torchvision.models as models
 import torch.nn.functional as F
+import config as cfg
 
 class ResnetBlock(nn.Module):
     def __init__(self, input_features, nb_features=64):
@@ -15,12 +16,12 @@ class ResnetBlock(nn.Module):
             # nn.LeakyReLU(),
             # nn.ReLU()
         )
-        self.relu = nn.LeakyReLU()
+        self.relu = nn.ReLU()
 
     def forward(self, x):
         convs = self.convs(x)
-        sum = convs + x
-        output = self.relu(sum)
+        # sum = convs + x
+        output = self.relu(convs + x)
         return output
 
 
@@ -40,11 +41,12 @@ class Refiner(nn.Module):
 
         self.resnet_blocks = nn.Sequential(*blocks)
 
-        self.attention = nn.MultiheadAttention(embed_dim=nb_features, num_heads=num_heads)
+        if cfg.attention:
+            self.attention = nn.MultiheadAttention(embed_dim=nb_features, num_heads=num_heads)
 
         self.conv_2 = nn.Sequential(
             nn.Conv2d(nb_features, in_features, 1, 1, 0),
-            nn.Tanh()
+            # nn.Tanh()
         )
 
     def forward(self, x):
@@ -52,16 +54,19 @@ class Refiner(nn.Module):
 
         res_block = self.resnet_blocks(conv_1)
 
-        # batch_size, channels, height, width = res_block.shape
-        # query = res_block.view(batch_size, channels, -1).permute(0, 2, 1)
-        # Apply multi-head self-attention
-        # att_output, _ = self.attention(query, query, query)
+        if cfg.attention:
+            batch_size, channels, height, width = res_block.shape
+            query = res_block.view(batch_size, channels, -1).permute(0, 2, 1)
+            # Apply multi-head self-attention
+            att_output, _ = self.attention(query, query, query)
 
-        # Reshape the output back to the original shape
-        # att_output = att_output.permute(0, 2, 1).view(batch_size, channels, height, width)
+            # Reshape the output back to the original shape
+            att_output = att_output.permute(0, 2, 1).view(batch_size, channels, height, width)
 
+            output = self.conv_2(att_output)
+        else:
+            output = self.conv_2(res_block)
 
-        output = self.conv_2(res_block)
         return output.clone()
 
 
@@ -93,7 +98,7 @@ class Discriminator(nn.Module):
             # nn.BatchNorm2d(32),
 
             nn.Conv2d(32, 2, 1, 1, 0),
-            nn.ReLU(),
+            # nn.ReLU(),
             # nn.LeakyReLU(),
             # nn.BatchNorm2d(2),
 
