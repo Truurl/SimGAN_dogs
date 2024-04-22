@@ -74,10 +74,16 @@ R_path = 'models/R_%d.pkl'
 # syn_path = f"{os.getenv('MEMFS')}/dataset/SynthEyes.dat"
 syn_path = f"{os.getenv('MEMFS')}/dataset/synth_dogs.hdf5"
 syn_datasets = ('synth_img', 'symth_labels')
+
+syn_seg_path = f"{os.getenv('MEMFS')}/dataset/synth_seg_dogs.hdf5"
+syn_seg_datasets = ('synth_img', 'synth_labels')
 # real image path
 # real_path =f"{os.getenv('MEMFS')}/dataset/MPIIGaze.dat"
 real_path =f"{os.getenv('MEMFS')}/dataset/real_dogs.hdf5"
 real_datasets = ('real_img', 'real_labels')
+
+real_seg_path =f"{os.getenv('MEMFS')}/dataset/real_seg_dogs.hdf5"
+real_seg_datasets = ('real_img', 'real_labels')
 
 # training result path to save
 train_res_path = f"{os.getenv('SCRATCH')}/simgan_results/sgd_batch_{batch_size}_delta_{delta}_D_{d_lr}_{k_d}__R_{r_lr}_{k_r}"

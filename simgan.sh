@@ -23,6 +23,9 @@ module load PyTorch/1.12.1-CUDA-11.3.1 -q
 mkdir $MEMFS/dataset
 # cp /net/tscratch/people/plgtrurl/datasets/eyes/*.dat $MEMFS/dataset
 cp /net/tscratch/people/plgtrurl/datasets/dogs/*.hdf5 $MEMFS/dataset
+cp /net/tscratch/people/plgtrurl/datasets/dogs/seg/*.hdf5 $MEMFS/dataset
+
+ls $MEMFS/dataset
 
 cd ~/SimGAN/SimGAN_pytorch
 # pip install torchvision==0.13.1 h5py wandb==0.13.3 --upgrade
