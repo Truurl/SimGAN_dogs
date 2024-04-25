@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import torch.utils.data as Data
 from torch.autograd import Variable
+import torch.nn.functional as F
 import torchvision
 from torchvision import transforms
 from itertools import cycle
@@ -88,7 +89,7 @@ class Main(object):
                     "n_heads": cfg.n_heads
                 }
             },
-            name=f'res-{cfg.n_resnets} heads-{cfg.n_heads}'
+            name=f'alternative-loss'
         )
 
     def get_next_synth_batch(self):
@@ -374,6 +375,7 @@ class Main(object):
             total_r_loss = 0.0
             total_r_loss_reg_scale = 0.0
             total_r_loss_adv = 0.0
+            total_r_loss_zone = 0.0
             total_acc_adv = 0.0
 
             for index in range(cfg.k_r):
@@ -397,7 +399,14 @@ class Main(object):
                 r_loss_adv = self.local_adversarial_loss(d_ref_pred, d_real_y)
                 r_loss_adv = torch.div(r_loss_adv, cfg.batch_size)
 
-                r_loss = r_loss_reg_scale + r_loss_adv
+                diff_tensor = torch.sum(ref_image_batch - syn_image_batch, dim=1)
+                diff_tensor = diff_tensor + diff_tensor.min().abs()
+                
+                # add 1e6 to tensor to avoid division by 0
+                inv_diff_loss = 1 / (diff_tensor + 1e6)
+                r_loss_zone = inv_diff_loss.mean()
+
+                r_loss = r_loss_reg_scale + r_loss_adv + r_loss_zone
 
                 r_loss.backward()
                 self.opt_R.step()
@@ -405,11 +414,13 @@ class Main(object):
                 total_r_loss += r_loss
                 total_r_loss_reg_scale += r_loss_reg_scale
                 total_r_loss_adv += r_loss_adv
+                total_r_loss_zone += r_loss_zone
                 total_acc_adv += acc_adv
 
             mean_r_loss = total_r_loss / cfg.k_r
             mean_r_loss_reg_scale = total_r_loss_reg_scale / cfg.k_r
             mean_r_loss_adv = total_r_loss_adv / cfg.k_r
+            mean_r_loss_zone = total_r_loss_zone / cfg.k_r
             mean_acc_adv = total_acc_adv / cfg.k_r
 
             # logging.info(f'(R)r_loss: {mean_r_loss.item():.4f}, \
@@ -483,6 +494,7 @@ class Main(object):
                 "refiner" : {
                     "loss": {
                         "adv": mean_r_loss_adv.item(),
+                        "zone": mean_r_loss_zone.item(),
                         "l1reg": mean_r_loss_reg_scale.item(),
                         "total": mean_r_loss.item(),
                     },
