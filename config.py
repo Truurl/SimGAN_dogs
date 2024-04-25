@@ -39,7 +39,7 @@ pics_line = 4
 # pre-train R times
 r_pretrain = 1000
 # pre-train D times
-d_pretrain = 1000
+d_pretrain = 500
 # train steps
 train_steps = 100000
 

@@ -459,7 +459,8 @@ class Main(object):
                 r_loss_adv = torch.div(r_loss_adv, cfg.batch_size)
 
                 r_loss_adv_seg = self.local_adversarial_loss(d_ref_seg_pred, d_real_y)
-                # r_loss_adv_seg = torch.div(r_loss_adv_seg, cfg.batch_size)
+                r_loss_adv_seg = torch.mul(r_loss_adv_seg, 0.5)
+                r_loss_adv_seg = torch.div(r_loss_adv_seg, cfg.batch_size)
 
                 r_loss = r_loss_reg_scale + r_loss_adv + r_loss_adv_seg
 
