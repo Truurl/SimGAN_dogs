@@ -2,7 +2,7 @@ import os
 import torch
 
 fretchet = False
-attention = False
+attention = True
 
 dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 # Is the PC has cuda

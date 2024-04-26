@@ -39,7 +39,8 @@ class Refiner(nn.Module):
         for i in range(block_num):
             blocks.append(ResnetBlock(nb_features, nb_features))
 
-        self.resnet_blocks = nn.Sequential(*blocks)
+        self.resnet_blocks_1 = nn.Sequential(*blocks[0:2])
+        self.resnet_blocks_2 = nn.Sequential(*blocks[2:])
 
         if cfg.attention:
             self.attention = nn.MultiheadAttention(embed_dim=nb_features, num_heads=num_heads)
@@ -52,20 +53,21 @@ class Refiner(nn.Module):
     def forward(self, x):
         conv_1 = self.conv_1(x)
 
-        res_block = self.resnet_blocks(conv_1)
+        res_block_1 = self.resnet_blocks_1(conv_1)
 
         if cfg.attention:
-            batch_size, channels, height, width = res_block.shape
-            query = res_block.view(batch_size, channels, -1).permute(0, 2, 1)
+            batch_size, channels, height, width = res_block_1.shape
+            query = res_block_1.view(batch_size, channels, -1).permute(0, 2, 1)
             # Apply multi-head self-attention
             att_output, _ = self.attention(query, query, query)
 
             # Reshape the output back to the original shape
             att_output = att_output.permute(0, 2, 1).view(batch_size, channels, height, width)
-
-            output = self.conv_2(att_output)
+        
+            res_block_2 = self.resnet_blocks_2(att_output)
+            output = self.conv_2(res_block_2)
         else:
-            output = self.conv_2(res_block)
+            output = self.conv_2(res_block_1)
 
         return output.clone()
 
