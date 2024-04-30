@@ -88,7 +88,7 @@ class Main(object):
                     "n_heads": cfg.n_heads
                 }
             },
-            name=f'res-{cfg.n_resnets} heads-{cfg.n_heads}'
+            name=f'middle-res-{cfg.n_resnets} heads-{cfg.n_heads}'
         )
 
     def get_next_synth_batch(self):
