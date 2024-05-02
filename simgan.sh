@@ -9,7 +9,7 @@
 
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu
-#SBATCH --mem=60G
+#SBATCH --mem=80G
 
 #SBATCH -C memfs
 #SBATCH --signal=B:TERM@300

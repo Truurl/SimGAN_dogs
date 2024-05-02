@@ -88,7 +88,7 @@ class Main(object):
                     "n_heads": cfg.n_heads
                 }
             },
-            name=f'res-{cfg.n_resnets} heads-{cfg.n_heads}'
+            name=f'Discriminator-VIT'
         )
 
     def get_next_synth_batch(self):
@@ -180,7 +180,8 @@ class Main(object):
         self.R = Refiner(cfg.n_resnets, cfg.img_channels,
                          nb_features=cfg.nb_features,
                          num_heads=cfg.n_heads)
-        self.D = Discriminator(input_features=cfg.img_channels)
+        # self.D = Discriminator(input_features=cfg.img_channels)
+        self.D = torchvision.models.vit_b_16()
 
         if cfg.fretchet:
             block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[2048]

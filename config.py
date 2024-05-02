@@ -23,8 +23,8 @@ r_gamma = 0.7
 d_step_size = 1000
 d_gamma = 0.5
 
-img_width = 64
-img_height = 64
+img_width = 224
+img_height = 224
 img_channels = 3
 
 n_resnets = 4
@@ -37,18 +37,18 @@ pics_line = 4
 
 # =================== training params ======================
 # pre-train R times
-r_pretrain = 1000
+r_pretrain = 100
 # pre-train D times
 d_pretrain = 1000
 # train steps
 train_steps = 100000
 
-batch_size = 256
+batch_size = 64
 # the history buffer size
 # buffer_size = 12800
 buffer_size = batch_size * 10
 k_d = 1  # number of discriminator updates per step
-k_r = 50  # number of generative network updates per step, the author of the paper said it's 50
+k_r = 1  # number of generative network updates per step, the author of the paper said it's 50
 
 # output R pre-training result per times
 r_pre_per = 10
