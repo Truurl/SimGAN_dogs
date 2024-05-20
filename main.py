@@ -88,7 +88,7 @@ class Main(object):
                     "n_heads": cfg.n_heads
                 }
             },
-            name=f'res-{cfg.n_resnets} heads-{cfg.n_heads}'
+            name=f'Ref-ViT'
         )
 
     def get_next_synth_batch(self):
@@ -180,6 +180,25 @@ class Main(object):
         self.R = Refiner(cfg.n_resnets, cfg.img_channels,
                          nb_features=cfg.nb_features,
                          num_heads=cfg.n_heads)
+        self.R = torchvision.models.vit_b_16()
+        refiner_last_layer = nn.Sequential(
+            nn.Linear(in_features=768, out_features=7*7*512),
+            nn.ReLU(),
+            nn.Unflatten(1, (512, 7, 7)),
+            nn.ConvTranspose2d(512, 256, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose2d(256, 128, kernel_size=3, stride=2, padding=1, output_padding=1),  # to 28x28
+            nn.ReLU(),
+            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1),  # to 56x56
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),  # to 112x112
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1),  # to 224x224
+            nn.ReLU(),
+            nn.ConvTranspose2d(16, 3, kernel_size=3, stride=1, padding=1),  # Stay at 224x224, adjust channels to 3
+            # nn.Sigmoid()  # Normalize the output to range [0, 1]
+        )
+        self.R.heads = refiner_last_layer
         self.D = Discriminator(input_features=cfg.img_channels)
 
         if cfg.fretchet:
@@ -360,7 +379,6 @@ class Main(object):
         wandb.watch(self.R)
         wandb.watch(self.D)
 
-        self.print_training_setup()
         self.metrics_calculation_thread = threading.Thread(target=self.metrics_thread, args=())
         self.metrics_calculation_thread.start()
 
@@ -593,6 +611,8 @@ if __name__ == '__main__':
     obj.build_network()
 
     obj.load_data()
+
+    obj.print_training_setup()
 
     obj.pre_train_r()
     obj.pre_train_d()
