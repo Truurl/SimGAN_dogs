@@ -183,6 +183,16 @@ class Main(object):
         # self.D = Discriminator(input_features=cfg.img_channels)
         self.D = torchvision.models.vit_b_16()
 
+        d_last_layer = nn.Sequential(
+            nn.Linear(self.D.heads[0].in_features, 16 * 16 * 3),    
+            nn.ReLU(),
+            nn.Unflatten(1, (3, 16, 16)),  # Unflatten to make 2D feature maps
+            Discriminator(input_features=cfg.img_channels)
+
+        )
+        self.D.heads = d_last_layer
+
+
         if cfg.fretchet:
             block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[2048]
             self.inception_model = InceptionV3([block_idx])
