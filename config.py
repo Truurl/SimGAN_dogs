@@ -2,7 +2,7 @@ import os
 import torch
 
 fretchet = False
-attention = False
+attention = True
 
 dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 # Is the PC has cuda
@@ -16,6 +16,10 @@ d_lr = 0.0001
 r_lr = 0.0001
 # lambda in paper, the author of the paper said it's 0.01
 delta = 0.01
+seg_delta = 1
+
+loss_balance = 1.2
+
 
 r_step_size = 1000
 r_gamma = 0.7

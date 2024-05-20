@@ -67,6 +67,7 @@ class Main(object):
                 'd_lr': cfg.d_lr,
                 'r_lr': cfg.r_lr,
                 'delta': cfg.delta,
+                'seg_delta': cfg.seg_delta,
                 'r_step_size': cfg.r_step_size,
                 'r_gamma': cfg.r_gamma,
                 'd_step_size': cfg.d_step_size,
@@ -452,14 +453,14 @@ class Main(object):
                 acc_adv_seg = calc_acc(d_ref_seg_pred, 'real')
 
                 r_loss_reg = self.self_regularization_loss(ref_image_batch, syn_image_batch)
-                r_loss_reg_scale = torch.mul(r_loss_reg, self.delta)
+                r_loss_reg_scale = torch.mul(r_loss_reg, cfg.delta)
                 r_loss_reg_scale = torch.div(r_loss_reg_scale, cfg.batch_size)
 
                 r_loss_adv = self.local_adversarial_loss(d_ref_pred, d_real_y)
                 r_loss_adv = torch.div(r_loss_adv, cfg.batch_size)
 
                 r_loss_adv_seg = self.local_adversarial_loss(d_ref_seg_pred, d_real_y)
-                r_loss_adv_seg = torch.mul(r_loss_adv_seg, 0.5)
+                r_loss_adv_seg = torch.mul(r_loss_adv_seg, cfg.seg_delta)
                 r_loss_adv_seg = torch.div(r_loss_adv_seg, cfg.batch_size)
 
                 r_loss = r_loss_reg_scale + r_loss_adv + r_loss_adv_seg
