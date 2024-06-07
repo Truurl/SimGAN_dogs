@@ -8,7 +8,7 @@
 #SBATCH --account=plgdyplomanci5-gpu-a100
 
 #SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu
+#SBATCH --gres=gpu:2
 #SBATCH --mem=60G
 
 #SBATCH -C memfs

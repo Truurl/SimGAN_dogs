@@ -1,14 +1,16 @@
 import os
 import torch
 
-fretchet = False
+fretchet = True
 attention = False
 
-dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+dev = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+metric_dev = torch.device("cuda:1") if torch.cuda.is_available() else torch.device("cpu")
 # Is the PC has cuda
 cuda_use = torch.cuda.is_available()
 # which cuda to use
 cuda_num = 0
+
 
 # learning rate for D, the lr in Apple blog is 0.0001
 d_lr = 0.0001
@@ -76,7 +78,7 @@ syn_path = f"{os.getenv('MEMFS')}/dataset/synth_dogs.hdf5"
 syn_datasets = ('synth_img', 'symth_labels')
 # real image path
 # real_path =f"{os.getenv('MEMFS')}/dataset/MPIIGaze.dat"
-real_path =f"{os.getenv('MEMFS')}/dataset/real_dogs.hdf5"
+real_path =f"{os.getenv('MEMFS')}/dataset/real_dogs_green.hdf5"
 real_datasets = ('real_img', 'real_labels')
 
 # training result path to save
