@@ -8,8 +8,13 @@
 #SBATCH --account=plgdyplomanci5-gpu-a100
 
 #SBATCH --cpus-per-task=4
+<<<<<<< HEAD
 #SBATCH --gres=gpu
 #SBATCH --mem=80G
+=======
+#SBATCH --gres=gpu:2
+#SBATCH --mem=60G
+>>>>>>> 70e5127 (main: Add second gpu to treining for calulcating metrics)
 
 #SBATCH -C memfs
 #SBATCH --signal=B:TERM@300

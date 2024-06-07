@@ -143,10 +143,10 @@ class Main(object):
                                                 val_ref_batch.cpu().data,
                                                 self.val_real_batch.cpu().data)
                     if cfg.fretchet:
-                        fretchet_dist_real_ref = calculate_fretchet(self.val_real_batch,
+                        fretchet_dist_real_ref = calculate_fretchet(self.val_real_batch.clone().cuda(1),
                                                                 val_ref_batch,
                                                                 self.inception_model)
-                        fretchet_dist_synth_ref = calculate_fretchet(self.val_synth_batch,
+                        fretchet_dist_synth_ref = calculate_fretchet(self.val_synth_batch.clone().cuda(1),
                                                                 val_ref_batch,
                                                                 self.inception_model)
                         fretchet_score = {
@@ -198,10 +198,10 @@ class Main(object):
             self.inception_model = InceptionV3([block_idx])
 
         if cfg.cuda_use:
-            self.R.cuda(cfg.cuda_num)
-            self.D.cuda(cfg.cuda_num)
+            self.R.cuda(cfg.dev)
+            self.D.cuda(cfg.dev)
             if cfg.fretchet:
-                self.inception_model.cuda(cfg.cuda_num)
+                self.inception_model.cuda(cfg.metric_dev)
 
         # self.opt_R = torch.optim.SGD(self.R.parameters(), lr=cfg.r_lr)
         # self.opt_D = torch.optim.SGD(self.D.parameters(), lr=cfg.d_lr)
@@ -368,6 +368,9 @@ class Main(object):
         self.val_synth_batch = self.get_next_synth_batch()[:32]
         self.val_real_batch = self.get_next_real_batch()[:32]
 
+        self.val_synth_batch_met = self.val_synth_batch.clone().to(cfg.metric_dev)
+        self.val_real_batch_met = self.val_real_batch.clone().to(cfg.metric_dev)
+
         wandb.watch(self.R)
         wandb.watch(self.D)
 
@@ -514,7 +517,7 @@ class Main(object):
 
             self.R.eval()
             self.D.eval()
-            val_ref_batch = self.R(self.val_synth_batch).clone()
+            val_ref_batch = self.R(self.val_synth_batch).to(cfg.metric_dev)
 
             data = {'step': step,
                     'l1_dict': copy.deepcopy(l1_dict),
