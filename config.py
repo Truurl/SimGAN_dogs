@@ -2,7 +2,7 @@ import os
 import torch
 
 fretchet = True
-attention = False
+attention = True
 
 dev = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 metric_dev = torch.device("cuda:1") if torch.cuda.is_available() else torch.device("cpu")
@@ -39,13 +39,13 @@ pics_line = 4
 
 # =================== training params ======================
 # pre-train R times
-r_pretrain = 1000
+r_pretrain = 100
 # pre-train D times
-d_pretrain = 500
+d_pretrain = 1000
 # train steps
 train_steps = 100000
 
-batch_size = 64
+batch_size = 32
 # the history buffer size
 # buffer_size = 12800
 buffer_size = batch_size * 10
